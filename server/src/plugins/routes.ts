@@ -4,6 +4,7 @@ import type { BotAccessCheck } from "../agents/profile-policy";
 import type { AppVariables } from "../auth/guards";
 import { requireAdmin } from "../auth/guards";
 import { CATALOGUE, catalogueEntry } from "./catalogue";
+import { SKILLS_CATALOGUE } from "./skills-catalogue";
 import {
   authorizationUrlFor,
   challengeFor,
@@ -165,6 +166,13 @@ export function createPluginRoutes(
       servers: await store.listServers(),
       // Scoped: the deployment's skills plus this person's own. An administrator sees them all.
       skills: await store.listSkills(skillActor(context)),
+      /*
+       * Ready-made skills the Discover tab offers with one click. Frozen in code for the same
+       * reason CATALOGUE above is: the list a fresh deployment offers is a decision to make once,
+       * not one to leave to whichever import ran last. Sent whole — there is no per-instance host
+       * or credential to resolve, unlike an MCP server, since a skill is only ever text.
+       */
+      skillsCatalogue: SKILLS_CATALOGUE,
       /*
        * What an administrator has to register with the vendor, character for character.
        *

@@ -93,10 +93,20 @@ export type CatalogueItem = {
   perInstance: boolean;
 };
 
+/** A ready-made skill offered on the Discover tab, added with one click. */
+export type SkillCatalogueItem = {
+  key: string;
+  title: string;
+  summary: string;
+  instructions: string;
+  sourceUrl: string;
+};
+
 export type PluginsPage = {
   catalogue: CatalogueItem[];
   servers: PluginServer[];
   skills: PluginSkill[];
+  skillsCatalogue: SkillCatalogueItem[];
   /**
    * Whether a Bot holding no credential of its own can still call a tool back.
    *

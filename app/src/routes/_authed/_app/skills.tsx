@@ -30,8 +30,14 @@ import {
 } from "@/components/ui/item";
 import { Separator } from "@/components/ui/separator";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
-import { removeSkillMutationOptions } from "@/lib/plugins/mutations";
-import { pluginsPageQueryOptions } from "@/lib/plugins/queries";
+import {
+  removeSkillMutationOptions,
+  saveSkillMutationOptions,
+} from "@/lib/plugins/mutations";
+import {
+  pluginsPageQueryOptions,
+  type SkillCatalogueItem,
+} from "@/lib/plugins/queries";
 
 /**
  * Personal `/` skills. They are instructions, not capabilities, and can only be granted to Bots the
@@ -82,6 +88,17 @@ function SkillsPage() {
   });
 
   /*
+   * Adding a Discover entry is a save like any other — the catalogue only supplies the starting
+   * slug, title, summary and instructions; from the moment it lands it is an ordinary personal
+   * skill, editable and deletable the same way one written from scratch is.
+   */
+  const addSkill = useMutation({
+    ...saveSkillMutationOptions(queryClient),
+    onError: (thrown: Error) => setError(thrown.message),
+    onSuccess: () => setError(null),
+  });
+
+  /*
    * The server has ALREADY excluded skills this person may not see — `listSkills` scopes the query
    * to `owner_user_id is null or owner_user_id = me`, so somebody else's private skill is never read
    * into the process. These two lines only sort what arrived into the two things the page draws.
@@ -93,6 +110,12 @@ function SkillsPage() {
   const skills = data?.skills ?? [];
   const mine = skills.filter((skill) => skill.ownerUserId === me?.id);
   const deployment = skills.filter((skill) => skill.ownerUserId === null);
+  // Once a slug exists — under any owner — the catalogue entry that offered it has nothing left
+  // to add, so it drops out of Discover rather than sitting there duplicated.
+  const installedSlugs = new Set(skills.map((skill) => skill.slug));
+  const discoverable = (data?.skillsCatalogue ?? []).filter(
+    (entry) => !installedSlugs.has(entry.key),
+  );
 
   return (
     <DetailPanel
@@ -259,6 +282,57 @@ function SkillsPage() {
             </PageRows>
           </PageSection>
         ) : null}
+
+        <PageSection
+          description="Ready-made instructions, added with one click. Once added they are yours to edit or delete, the same as one you write from scratch."
+          title="Discover"
+        >
+          {loading ? null : discoverable.length === 0 ? (
+            <Empty className="mt-4 h-[120px] border border-dashed">
+              <EmptyHeader>
+                <EmptyTitle className="text-muted-foreground">
+                  You've added everything on offer.
+                </EmptyTitle>
+              </EmptyHeader>
+            </Empty>
+          ) : (
+            <PageRows>
+              {discoverable.map((entry: SkillCatalogueItem, index) => {
+                const pending =
+                  addSkill.isPending && addSkill.variables?.slug === entry.key;
+                return (
+                  <StaggerItem index={index} key={entry.key}>
+                    <Item size="sm">
+                      <ItemContent>
+                        <ItemTitle>{entry.title}</ItemTitle>
+                        <ItemDescription>{entry.summary}</ItemDescription>
+                      </ItemContent>
+                      <ItemActions>
+                        <Button
+                          disabled={addSkill.isPending}
+                          onClick={() => {
+                            setError(null);
+                            addSkill.mutate({
+                              slug: entry.key,
+                              title: entry.title,
+                              summary: entry.summary,
+                              instructions: entry.instructions,
+                            });
+                          }}
+                          size="sm"
+                          variant="outline"
+                        >
+                          {pending ? "Adding…" : "Add"}
+                        </Button>
+                      </ItemActions>
+                    </Item>
+                    {index !== discoverable.length - 1 && <Separator />}
+                  </StaggerItem>
+                );
+              })}
+            </PageRows>
+          )}
+        </PageSection>
 
         {/*
          * The commented write-a-skill form that used to sit here is gone: the detail panel above is
