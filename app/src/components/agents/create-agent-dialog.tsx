@@ -3,14 +3,17 @@ import { AnimatePresence, MotionConfig, motion } from "motion/react";
 import { useState } from "react";
 import useMeasure from "react-use-measure";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Dialog,
   DialogBody,
   DialogContent,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import {
   Field,
+  FieldDescription,
   FieldError,
   FieldGroup,
   FieldLabel,
@@ -38,6 +41,16 @@ import {
   type ConnectionVerdict,
   testAgentConnection,
 } from "@/lib/agents/queries";
+import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { useStartChannel } from "@/lib/channels/start";
+import { client } from "@/lib/client";
+import { grantPlugin, invalidatePlugins } from "@/lib/plugins/mutations";
+import {
+  type PluginServer,
+  type PluginSkill,
+  pluginsPageQueryOptions,
+  type SkillCatalogueItem,
+} from "@/lib/plugins/queries";
 import { queryClient } from "@/query-client";
 
 /**
@@ -70,7 +83,14 @@ export function CreateAgentDialog({
 }
 
 /** The steps, in the order they are asked. The name is the questionnaire item's name. */
-const STEPS = ["identity", "visibility", "kind"] as const;
+const STEPS = [
+  "identity",
+  "visibility",
+  "kind",
+  "skills",
+  "tools",
+  "routine",
+] as const;
 type StepName = (typeof STEPS)[number];
 
 /** The two ways a coworker can be seen. */
@@ -139,6 +159,13 @@ function identityIssues(
   return issues;
 }
 
+/** Add a member if it is absent, remove it if it is present. */
+function toggled(set: ReadonlySet<string>, member: string): Set<string> {
+  const next = new Set(set);
+  if (!next.delete(member)) next.add(member);
+  return next;
+}
+
 /** A pane arrives from the side the journey is moving toward, and leaves out the other. */
 const variants = {
   initial: (direction: number) => ({ x: `${110 * direction}%`, opacity: 0 }),
@@ -154,6 +181,9 @@ function CreateAgentWizard({
   onCreated: (agentId: string) => void;
 }) {
   const createAgent = useMutation(createAgentMutationOptions(queryClient));
+  const { data: me } = useQuery(currentUserQueryOptions());
+  const { data: plugins } = useQuery(pluginsPageQueryOptions());
+  const { start: startChannel } = useStartChannel();
   /*
    * Whether "built-in" is a coworker this deployment can actually make. Assumed true while the
    * answer is loading, so the common deployment never sees the card flash from disabled to
@@ -173,6 +203,29 @@ function CreateAgentWizard({
   const [connection, setConnection] = useState<ConnectionVerdict | null>(null);
   const [testing, setTesting] = useState(false);
   const [ref, bounds] = useMeasure();
+
+  /**
+   * Set once "kind" is answered: the create moves here now that three more questions follow it,
+   * because granting a skill or a tool needs an id to grant it to. A coworker abandoned after this
+   * point is already real and already saved, the same as it always was the moment "kind" was
+   * answered — only the step it happens on moved.
+   */
+  const [agentId, setAgentId] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+  const [selectedSkillRefs, setSelectedSkillRefs] = useState<Set<string>>(
+    new Set(),
+  );
+  const [appliedSkillRefs, setAppliedSkillRefs] = useState<Set<string>>(
+    new Set(),
+  );
+  const [selectedToolRefs, setSelectedToolRefs] = useState<Set<string>>(
+    new Set(),
+  );
+  const [appliedToolRefs, setAppliedToolRefs] = useState<Set<string>>(
+    new Set(),
+  );
+  const [routineText, setRoutineText] = useState("");
 
   const last = step === STEPS.length - 1;
   const set = <K extends keyof AgentFormValues>(
@@ -213,8 +266,59 @@ function CreateAgentWizard({
         agentFormSchema.shape.endpoint.safeParse(values.endpoint).success
       );
     }
-    // Visibility always holds an answer; the radio starts on private.
+    // Visibility always holds an answer; the radio starts on private. Skills, tools and the
+    // routine are all optional questions: none of them can fail to be "answered".
     return true;
+  };
+
+  /** Grant every selected skill and tool to the coworker just created, skipping what already holds. */
+  const applySelections = async () => {
+    if (!agentId) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      const catalogueByKey = new Map(
+        (plugins?.skillsCatalogue ?? []).map((entry) => [entry.key, entry]),
+      );
+      const existingSlugs = new Set(
+        (plugins?.skills ?? []).map((skill) => skill.slug),
+      );
+      for (const slug of selectedSkillRefs) {
+        if (appliedSkillRefs.has(slug)) continue;
+        if (!existingSlugs.has(slug)) {
+          // A Discover entry nobody has added yet: writing it is what "selecting" it means here.
+          const entry = catalogueByKey.get(slug);
+          if (!entry) continue;
+          await client("/api/plugins/skills", {
+            method: "POST",
+            body: {
+              slug: entry.key,
+              title: entry.title,
+              summary: entry.summary,
+              instructions: entry.instructions,
+            },
+            fallback: "The skill could not be saved.",
+          });
+        }
+        await grantPlugin({ kind: "skill", ref: slug, agentId });
+      }
+      for (const toolRef of selectedToolRefs) {
+        if (appliedToolRefs.has(toolRef)) continue;
+        await grantPlugin({ kind: "mcp", ref: toolRef, agentId });
+      }
+      setAppliedSkillRefs(new Set(selectedSkillRefs));
+      setAppliedToolRefs(new Set(selectedToolRefs));
+      await invalidatePlugins(queryClient);
+    } catch (error) {
+      setApplyError(
+        error instanceof Error
+          ? error.message
+          : "That could not be granted to the coworker.",
+      );
+      throw error;
+    } finally {
+      setApplying(false);
+    }
   };
 
   const go = (to: number) => {
@@ -232,12 +336,38 @@ function CreateAgentWizard({
       setTried(true);
       return;
     }
+
+    // The create moves here, off the last step: three more questions grant things to the
+    // coworker's own id, so it has to exist before they can be asked. A step revisited after
+    // Back does not create a second one — the id already set is reused.
+    if (STEPS[step] === "kind" && !agentId) {
+      const agent = await createAgent.mutateAsync(agentInputFrom(values));
+      setAgentId(agent.id);
+      go(step + 1);
+      return;
+    }
+
     if (!last) {
       go(step + 1);
       return;
     }
-    const agent = await createAgent.mutateAsync(agentInputFrom(values));
-    onCreated(agent.id);
+
+    // Whatever was ticked on the skills and tools steps is granted now, in one place, so a
+    // person who went Back and forth between them is not granted things twice or left with a
+    // partial set from a step they never returned to.
+    try {
+      await applySelections();
+    } catch {
+      return; // applyError is already set; stay on this step rather than finish partway.
+    }
+
+    if (agentId && routineText.trim() !== "") {
+      // Navigates to the new channel itself, which is what leaves /agents and this dialog with
+      // it — calling onClose here as well would fire a second, competing navigation back to it.
+      await startChannel(agentId, routineText.trim());
+      return;
+    }
+    if (agentId) onCreated(agentId);
   };
 
   return (
@@ -308,7 +438,7 @@ function CreateAgentWizard({
                       />
                     ) : STEPS[step] === "visibility" ? (
                       <VisibilityStep set={set} values={values} />
-                    ) : (
+                    ) : STEPS[step] === "kind" ? (
                       <KindStep
                         builtInAvailable={builtInAvailable}
                         endpointError={endpointError}
@@ -330,6 +460,33 @@ function CreateAgentWizard({
                         testing={testing}
                         values={values}
                       />
+                    ) : STEPS[step] === "skills" ? (
+                      <SkillsStep
+                        catalogue={plugins?.skillsCatalogue ?? []}
+                        onToggle={(ref) =>
+                          setSelectedSkillRefs((current) =>
+                            toggled(current, ref),
+                          )
+                        }
+                        selected={selectedSkillRefs}
+                        skills={plugins?.skills ?? []}
+                        userId={me?.id}
+                      />
+                    ) : STEPS[step] === "tools" ? (
+                      <ToolsStep
+                        onToggle={(ref) =>
+                          setSelectedToolRefs((current) =>
+                            toggled(current, ref),
+                          )
+                        }
+                        selected={selectedToolRefs}
+                        servers={plugins?.servers ?? []}
+                      />
+                    ) : (
+                      <RoutineStep
+                        onChange={setRoutineText}
+                        value={routineText}
+                      />
                     )}
                   </motion.div>
                 </AnimatePresence>
@@ -342,6 +499,11 @@ function CreateAgentWizard({
               {createAgent.error.message}
             </p>
           ) : null}
+          {applyError ? (
+            <p className="mt-4 text-sm text-destructive" role="alert">
+              {applyError}
+            </p>
+          ) : null}
 
           <div className="mt-6 flex justify-between gap-2">
             <Button
@@ -352,15 +514,17 @@ function CreateAgentWizard({
               {step === 0 ? "Cancel" : "Back"}
             </Button>
             <Button
-              disabled={createAgent.isPending}
+              disabled={createAgent.isPending || applying}
               onClick={() => void advance()}
               type="button"
             >
               {last
-                ? createAgent.isPending
+                ? createAgent.isPending || applying
                   ? "Creating…"
                   : "Create coworker"
-                : "Continue"}
+                : STEPS[step] === "kind" && createAgent.isPending
+                  ? "Creating…"
+                  : "Continue"}
             </Button>
           </div>
         </Questionnaire>
@@ -609,6 +773,204 @@ function KindStep({
           </Field>
         </FieldGroup>
       ) : null}
+    </StepItem>
+  );
+}
+
+/** One checkbox row, the shape every list in the three new steps below shares. */
+function ToggleRow({
+  id,
+  checked,
+  onToggle,
+  title,
+  description,
+  mono,
+}: {
+  id: string;
+  checked: boolean;
+  onToggle: () => void;
+  title: string;
+  description?: string;
+  /** Set for a tool's own name, which is an identifier rather than prose. */
+  mono?: boolean;
+}) {
+  return (
+    <div className="flex items-start gap-3 py-2">
+      <Checkbox
+        checked={checked}
+        className="mt-0.5"
+        id={id}
+        onCheckedChange={onToggle}
+      />
+      <label className="flex-1 cursor-pointer" htmlFor={id}>
+        <span className={`block text-sm ${mono ? "font-mono text-xs" : ""}`}>
+          {title}
+        </span>
+        {description ? (
+          <span className="block text-xs text-muted-foreground">
+            {description}
+          </span>
+        ) : null}
+      </label>
+    </div>
+  );
+}
+
+function SkillsStep({
+  skills,
+  catalogue,
+  userId,
+  selected,
+  onToggle,
+}: {
+  skills: PluginSkill[];
+  catalogue: SkillCatalogueItem[];
+  userId: string | undefined;
+  selected: ReadonlySet<string>;
+  onToggle: (slug: string) => void;
+}) {
+  // Yours, plus the deployment's own: both are things this coworker could carry away from this
+  // step, and only an administrator writes the second kind, so nothing here can create one.
+  const existing = skills.filter(
+    (skill) => skill.ownerUserId === null || skill.ownerUserId === userId,
+  );
+  const existingSlugs = new Set(existing.map((skill) => skill.slug));
+  const discoverable = catalogue.filter(
+    (entry) => !existingSlugs.has(entry.key),
+  );
+
+  return (
+    <StepItem name="skills">
+      <QuestionnaireTitle>Which skills does it carry?</QuestionnaireTitle>
+      <QuestionnaireDescription>
+        Optional. A skill is an instruction, invoked with <code>/</code>; this
+        coworker only carries the ones ticked here, and more can be added
+        later from its own page.
+      </QuestionnaireDescription>
+      {existing.length === 0 && discoverable.length === 0 ? (
+        <Empty className="mt-4 h-[120px] border border-dashed">
+          <EmptyHeader>
+            <EmptyTitle className="text-muted-foreground">
+              No skills exist yet. Write one from{" "}
+              <span className="font-mono text-xs">/skills</span> after this
+              coworker is created.
+            </EmptyTitle>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="mt-2 divide-y divide-border">
+          {existing.map((skill) => (
+            <ToggleRow
+              checked={selected.has(skill.slug)}
+              description={skill.summary || `/${skill.slug}`}
+              id={`create-agent-skill-${skill.slug}`}
+              key={skill.slug}
+              onToggle={() => onToggle(skill.slug)}
+              title={skill.title}
+            />
+          ))}
+          {discoverable.map((entry) => (
+            <ToggleRow
+              checked={selected.has(entry.key)}
+              description={entry.summary}
+              id={`create-agent-skill-${entry.key}`}
+              key={entry.key}
+              onToggle={() => onToggle(entry.key)}
+              title={`${entry.title} · Discover`}
+            />
+          ))}
+        </div>
+      )}
+    </StepItem>
+  );
+}
+
+function ToolsStep({
+  servers,
+  selected,
+  onToggle,
+}: {
+  servers: PluginServer[];
+  selected: ReadonlySet<string>;
+  onToggle: (ref: string) => void;
+}) {
+  const withTools = servers.filter((server) => server.tools.length > 0);
+
+  return (
+    <StepItem name="tools">
+      <QuestionnaireTitle>Which tools can it call?</QuestionnaireTitle>
+      <QuestionnaireDescription>
+        Optional. From the plugins this deployment already holds. Every call
+        is still decided, policy-checked and audited when it happens — this
+        only says which tools this coworker may be offered at all.
+      </QuestionnaireDescription>
+      {withTools.length === 0 ? (
+        <Empty className="mt-4 h-[120px] border border-dashed">
+          <EmptyHeader>
+            <EmptyTitle className="text-muted-foreground">
+              This deployment has no plugin installed yet. Add one from{" "}
+              <span className="font-mono text-xs">/admin/plugins</span>.
+            </EmptyTitle>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="mt-2 flex flex-col gap-4">
+          {withTools.map((server) => (
+            <div key={server.id}>
+              <p className="text-xs font-medium text-muted-foreground">
+                {server.title}
+              </p>
+              <div className="divide-y divide-border">
+                {server.tools.map((tool) => (
+                  <ToggleRow
+                    checked={selected.has(tool.ref)}
+                    description={tool.description}
+                    id={`create-agent-tool-${tool.ref}`}
+                    key={tool.ref}
+                    mono
+                    onToggle={() => onToggle(tool.ref)}
+                    title={tool.name}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </StepItem>
+  );
+}
+
+function RoutineStep({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <StepItem name="routine">
+      <QuestionnaireTitle>Should it check in on a schedule?</QuestionnaireTitle>
+      <QuestionnaireDescription>
+        Optional, and set up the way every routine is: in a conversation. Say
+        what to do and how often, in plain language, and Finish opens a
+        channel with this coworker to set it up before you see anything else.
+      </QuestionnaireDescription>
+      <FieldGroup>
+        <Field>
+          <Textarea
+            aria-label="Routine instruction"
+            onChange={(event) => onChange(event.target.value)}
+            placeholder="Every weekday morning at 9, check for pending expense reports older than 3 days and post a summary here."
+            rows={4}
+            value={value}
+          />
+          <FieldDescription>
+            Leave this blank to skip — you can always ask for a routine later,
+            in any channel with this coworker.
+          </FieldDescription>
+        </Field>
+      </FieldGroup>
     </StepItem>
   );
 }
