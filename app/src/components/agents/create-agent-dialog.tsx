@@ -42,6 +42,7 @@ import {
   testAgentConnection,
 } from "@/lib/agents/queries";
 import { currentUserQueryOptions } from "@/lib/auth/queries";
+import { MoodAvatar } from "@/lib/avatars/mood-avatar";
 import { useStartChannel } from "@/lib/channels/start";
 import { client } from "@/lib/client";
 import { grantPlugin, invalidatePlugins } from "@/lib/plugins/mutations";
@@ -159,6 +160,11 @@ function identityIssues(
   return issues;
 }
 
+/** A short random string, good enough as a DiceBear seed and nothing else. */
+function randomSeed(): string {
+  return Math.random().toString(36).slice(2, 10);
+}
+
 /** Add a member if it is absent, remove it if it is present. */
 function toggled(set: ReadonlySet<string>, member: string): Set<string> {
   const next = new Set(set);
@@ -203,6 +209,14 @@ function CreateAgentWizard({
   const [connection, setConnection] = useState<ConnectionVerdict | null>(null);
   const [testing, setTesting] = useState(false);
   const [ref, bounds] = useMeasure();
+
+  // A handful of faces to choose from, generated once when the dialog opens rather than on every
+  // keystroke: nothing about the identity step should reshuffle the row underneath a person still
+  // typing the name.
+  const [avatarCandidates, setAvatarCandidates] = useState<string[]>(() =>
+    Array.from({ length: 6 }, randomSeed),
+  );
+  const [avatarSeed, setAvatarSeed] = useState(() => avatarCandidates[0]);
 
   /**
    * Set once "kind" is answered: the create moves here now that three more questions follow it,
@@ -341,7 +355,10 @@ function CreateAgentWizard({
     // coworker's own id, so it has to exist before they can be asked. A step revisited after
     // Back does not create a second one — the id already set is reused.
     if (STEPS[step] === "kind" && !agentId) {
-      const agent = await createAgent.mutateAsync(agentInputFrom(values));
+      const agent = await createAgent.mutateAsync({
+        ...agentInputFrom(values),
+        avatarSeed,
+      });
       setAgentId(agent.id);
       go(step + 1);
       return;
@@ -432,7 +449,15 @@ function CreateAgentWizard({
                   >
                     {STEPS[step] === "identity" ? (
                       <IdentityStep
+                        avatarCandidates={avatarCandidates}
+                        avatarSeed={avatarSeed}
                         errors={identityErrors}
+                        onSelectAvatar={setAvatarSeed}
+                        onShuffleAvatars={() => {
+                          const next = Array.from({ length: 6 }, randomSeed);
+                          setAvatarCandidates(next);
+                          setAvatarSeed(next[0]);
+                        }}
                         set={set}
                         values={values}
                       />
@@ -559,6 +584,10 @@ function IdentityStep({
   values,
   errors,
   set,
+  avatarSeed,
+  avatarCandidates,
+  onSelectAvatar,
+  onShuffleAvatars,
 }: {
   values: AgentFormValues;
   errors: Partial<Record<IdentityField, string>>;
@@ -566,6 +595,10 @@ function IdentityStep({
     key: K,
     value: AgentFormValues[K],
   ) => void;
+  avatarSeed: string;
+  avatarCandidates: string[];
+  onSelectAvatar: (seed: string) => void;
+  onShuffleAvatars: () => void;
 }) {
   return (
     <StepItem name="identity">
@@ -573,6 +606,33 @@ function IdentityStep({
       <QuestionnaireDescription>
         The role you write here applies in every channel this coworker works in.
       </QuestionnaireDescription>
+      <Field>
+        <FieldLabel>Avatar</FieldLabel>
+        <div className="flex flex-wrap items-center gap-2">
+          {avatarCandidates.map((seed) => {
+            const chosen = seed === avatarSeed;
+            return (
+              <button
+                aria-label="Use this avatar"
+                aria-pressed={chosen}
+                className={`rounded-full ring-2 transition-colors ${
+                  chosen
+                    ? "ring-primary"
+                    : "ring-transparent hover:ring-border"
+                }`}
+                key={seed}
+                onClick={() => onSelectAvatar(seed)}
+                type="button"
+              >
+                <MoodAvatar seed={seed} size={44} />
+              </button>
+            );
+          })}
+          <Button onClick={onShuffleAvatars} size="sm" type="button" variant="outline">
+            Shuffle
+          </Button>
+        </div>
+      </Field>
       <FieldGroup>
         <Field data-invalid={errors.name ? true : undefined}>
           <FieldLabel htmlFor="create-agent-name">Name</FieldLabel>

@@ -477,7 +477,9 @@ export function createAgentProfileStore(
           ownerUserId: actor.id,
           title: input.title,
           roleDescription: input.roleDescription,
-          avatarSeed: id,
+          // A seed chosen in the wizard's avatar step, or the id, exactly as before this field
+          // existed — the id was never load-bearing beyond being some string unique to this Bot.
+          avatarSeed: input.avatarSeed?.trim() || id,
           visibility: input.visibility,
         });
 

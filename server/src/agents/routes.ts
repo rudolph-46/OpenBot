@@ -30,6 +30,7 @@ type AgentInputObject = {
   visibility?: unknown;
   endpoint?: unknown;
   auth?: unknown;
+  avatarSeed?: unknown;
 };
 
 /**
@@ -120,9 +121,24 @@ export function parseAgentInput(
     }
   }
 
+  // Optional and only ever a seed for a generated face, never rendered as HTML or run as anything,
+  // so the only floor worth enforcing is a length nobody's picker would ever need to exceed.
+  let avatarSeed: string | undefined;
+  if (typeof input.avatarSeed === "string" && input.avatarSeed.trim()) {
+    avatarSeed = input.avatarSeed.trim().slice(0, 200);
+  }
+
   return {
     ok: true,
-    value: { name, title, roleDescription, visibility, endpoint, auth },
+    value: {
+      name,
+      title,
+      roleDescription,
+      visibility,
+      endpoint,
+      auth,
+      avatarSeed,
+    },
   };
 }
 

@@ -1,5 +1,5 @@
-import Avatar from "boring-avatars";
 import { memo } from "react";
+import { MoodAvatar } from "@/lib/avatars/mood-avatar";
 import { cn } from "@/lib/utils";
 
 /**
@@ -25,7 +25,7 @@ export const ChannelAvatar = memo(function ChannelAvatar({
 
   const avatar =
     channelSize === 1 ? (
-      <Avatar className="size-full" name={participantIds[0]} size={size} />
+      <MoodAvatar className="size-full" seed={participantIds[0]} size={size} />
     ) : (
       <div className="flex flex-row items-center size-full">
         {participantIds.slice(0, 3).map((c, i, shown) => (
@@ -38,9 +38,9 @@ export const ChannelAvatar = memo(function ChannelAvatar({
               transform: `translateX(${i * -75}%)`,
             }}
           >
-            <Avatar
+            <MoodAvatar
               className="size-full"
-              name={c}
+              seed={c}
               size={size / (shown.length / 2)}
             />
           </div>

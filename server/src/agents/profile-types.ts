@@ -48,4 +48,11 @@ export type CreateAgentInput = Pick<
    * why it is optional rather than defaulting to empty; a blank field must not drop a key.
    */
   auth?: { header: string; value: string };
+  /**
+   * The seed its face is drawn from, chosen in the creation wizard's avatar step.
+   *
+   * Optional: absent means what it always meant before this field existed — generated from the
+   * new id, in `create` below.
+   */
+  avatarSeed?: string;
 };

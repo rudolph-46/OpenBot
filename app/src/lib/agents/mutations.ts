@@ -16,6 +16,12 @@ export type AgentInput = {
   endpoint?: string;
   /** Write-only auth value; omitted when the user leaves the key field empty. */
   auth?: { header: string; value: string };
+  /**
+   * The seed its face is drawn from. Create-only: omitted, the server keeps generating one from
+   * the new id the way it always has, so nothing outside the creation wizard's own avatar step
+   * has to know this field exists.
+   */
+  avatarSeed?: string;
 };
 
 /** The sentence for every write here, since they all fail the same way to a reader. */
