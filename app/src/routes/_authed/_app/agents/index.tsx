@@ -50,8 +50,8 @@ function AgentGrid({
       <h2 className="text-lg font-semibold">{title}</h2>
       {loading ? (
         <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
-          {Array.from({ length: 6 }).map((_, index) => (
-            <Skeleton className="h-[180px] rounded-lg" key={index} />
+          {["one", "two", "three", "four", "five", "six"].map((placeholder) => (
+            <Skeleton className="h-[180px] rounded-lg" key={placeholder} />
           ))}
         </div>
       ) : agents?.length ? (

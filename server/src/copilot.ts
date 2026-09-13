@@ -1,5 +1,6 @@
 import type { BaseEvent, Message, RunAgentInput } from "@ag-ui/client";
 import { AbstractAgent, HttpAgent } from "@ag-ui/client";
+import { createOpenAI } from "@ai-sdk/openai";
 import type { BuiltInAgentConfiguration } from "@copilotkit/runtime/v2";
 import {
   BuiltInAgent,
@@ -292,6 +293,79 @@ export function standingInstructionsGuidance(
   ].join("\n\n");
 }
 
+/**
+ * Providers the per-agent model picker offers that CopilotKit's own `resolveModel` has no branch
+ * for — it only knows `openai`, `anthropic`, `google` and `minimax`, and throws "Unknown provider"
+ * for anything else, verbatim, however this deployment is configured. Each of these speaks an
+ * OpenAI-compatible `/chat/completions` API, so a `LanguageModel` built here with `createOpenAI`
+ * and handed to CopilotKit directly sidesteps that switch entirely: `resolveModel` only parses a
+ * string, and returns anything else — this included — unchanged.
+ *
+ * `deepseek`, `mistralai` and `xai` are named under OpenRouter here rather than their own vendor
+ * APIs, because this deployment's one configured model credential is whatever `OPENAI_API_KEY`
+ * holds — an OpenRouter key in the common case, per `docs/deployment.md`'s BOT_MODEL guidance —
+ * and OpenRouter fronts all three under its own published vendor prefix. `x-ai`, not `xai`, is that
+ * prefix; it is the one mismatch against this map's own keys worth naming, because a caller who
+ * assumed they matched would ship a 404 that reads as an auth failure. `groq` and `together` are
+ * each other's opposite: no OpenRouter vendor prefix publishes either name, so they route to their
+ * own direct APIs and need their own key — unset, the same "Model credential is not configured"
+ * refusal below fires, naming the missing variable instead of failing as a vague network error.
+ */
+const AGGREGATOR_ROUTED_PROVIDERS: Readonly<
+  Record<
+    string,
+    { baseURL: string; vendorPrefix?: string; apiKeyEnvVar?: string }
+  >
+> = {
+  deepseek: {
+    baseURL: "https://openrouter.ai/api/v1",
+    vendorPrefix: "deepseek",
+  },
+  mistralai: {
+    baseURL: "https://openrouter.ai/api/v1",
+    vendorPrefix: "mistralai",
+  },
+  xai: { baseURL: "https://openrouter.ai/api/v1", vendorPrefix: "x-ai" },
+  groq: { baseURL: "https://api.groq.com/openai/v1", apiKeyEnvVar: "GROQ_API_KEY" },
+  together: {
+    baseURL: "https://api.together.xyz/v1",
+    apiKeyEnvVar: "TOGETHER_API_KEY",
+  },
+};
+
+/**
+ * The model an agent's own override resolves to, or `null` when its provider needs a credential
+ * this deployment does not have — the caller falls back to the same refusal an unconfigured
+ * built-in agent already gets, naming what is actually missing rather than crashing downstream in
+ * a dependency with "Unknown provider".
+ */
+function resolvedAgentModel(
+  override: { provider: string; name: string },
+  environment: Record<string, string | undefined> = process.env,
+):
+  | { model: string | import("ai").LanguageModel }
+  | { missingCredential: string } {
+  const routed = AGGREGATOR_ROUTED_PROVIDERS[override.provider];
+  if (!routed) {
+    // Native to CopilotKit (openai, anthropic, google/google_genai) or "openrouter" — the last
+    // sends the full "vendor/model" string the person typed straight through OPENAI_BASE_URL,
+    // exactly like the deployment-wide BOT_MODEL fallback already does.
+    const provider =
+      override.provider === "openrouter" ? "openai" : override.provider;
+    return { model: `${provider}/${override.name}` };
+  }
+  const apiKey = routed.apiKeyEnvVar
+    ? environment[routed.apiKeyEnvVar]
+    : environment.OPENAI_API_KEY;
+  if (!apiKey) {
+    return { missingCredential: routed.apiKeyEnvVar ?? "OPENAI_API_KEY" };
+  }
+  const name = routed.vendorPrefix
+    ? `${routed.vendorPrefix}/${override.name}`
+    : override.name;
+  return { model: createOpenAI({ apiKey, baseURL: routed.baseURL })(name) };
+}
+
 export function builtInAgentConfiguration(
   agent: RegisteredBuiltInAgent,
   model: RuntimeModel,
@@ -341,10 +415,23 @@ export function builtInAgentConfiguration(
 
   const standing = standingInstructionsGuidance(standingInstructions);
 
+  const modelOverride = agent.model
+    ? resolvedAgentModel(agent.model)
+    : { model: `${model.provider}/${model.defaultModel}` };
+  if ("missingCredential" in modelOverride) {
+    return {
+      type: "custom",
+      // biome-ignore lint/correctness/useYield: this agent must fail when iteration starts.
+      factory: async function* () {
+        throw new Error(
+          `Model credential is not configured for ${agent.name}. Set ${modelOverride.missingCredential}.`,
+        );
+      },
+    };
+  }
+
   return {
-    model: agent.model
-      ? `${agent.model.provider}/${agent.model.name}`
-      : `${model.provider}/${model.defaultModel}`,
+    model: modelOverride.model,
     /*
      * The package's role, then the person's own standing instructions, then what this Bot actually
      * holds, then the computer.

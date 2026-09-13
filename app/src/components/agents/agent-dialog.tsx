@@ -19,6 +19,14 @@ import { HandoffPanel } from "@/components/agents/handoff-panel";
 import { RoutinesList } from "@/components/routines/routines-list";
 import { Button } from "@/components/ui/button";
 import {
+  Combobox,
+  ComboboxContent,
+  ComboboxEmpty,
+  ComboboxInput,
+  ComboboxItem,
+  ComboboxList,
+} from "@/components/ui/combobox";
+import {
   Dialog,
   DialogContent,
   DialogDescription,
@@ -516,6 +524,32 @@ function modelProviderLabel(provider: string): string {
   );
 }
 
+/**
+ * A few real, current model names per provider, to search instead of guessing what to type from
+ * scratch. Not exhaustive and not validated against any live catalogue — a model this deployment's
+ * provider has never heard of still fails at call time the same way a mistyped one always did. Free
+ * text keeps working: picking one of these sets the field, but nothing stops typing past it.
+ */
+const MODEL_NAME_SUGGESTIONS: Record<string, readonly string[]> = {
+  openrouter: [
+    "anthropic/claude-sonnet-4.5",
+    "anthropic/claude-fable-5.1",
+    "openai/gpt-5.5",
+    "deepseek/deepseek-v4-pro",
+    "google/gemini-2.5-pro",
+    "x-ai/grok-4",
+    "mistralai/mistral-large-2411",
+  ],
+  openai: ["gpt-5.5", "gpt-5.5-mini", "gpt-4.1"],
+  anthropic: ["claude-sonnet-4.5", "claude-opus-4.7", "claude-fable-5.1"],
+  google_genai: ["gemini-2.5-pro", "gemini-2.5-flash", "gemini-3.5-flash"],
+  deepseek: ["deepseek-v4-pro", "deepseek-v4-flash", "deepseek-chat"],
+  groq: ["llama-3.3-70b-versatile", "mixtral-8x7b-32768"],
+  mistralai: ["mistral-large-2411", "mistral-small-2409"],
+  xai: ["grok-4", "grok-4-fast"],
+  together: ["meta-llama/Llama-3.3-70B-Instruct-Turbo"],
+};
+
 function ModelItem({
   model,
   canManage,
@@ -620,20 +654,35 @@ function ModelItem({
               ))}
             </SelectContent>
           </Select>
-          <Input
-            disabled={provider === "default"}
-            onChange={(event) => setName(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter") {
-                event.preventDefault();
-                void submit();
-              }
-            }}
-            placeholder={
-              provider === "openrouter" ? "openai/gpt-4o-mini" : "Model name"
-            }
-            value={provider === "default" ? "" : name}
-          />
+          <Combobox
+            autoHighlight
+            inputValue={provider === "default" ? "" : name}
+            items={MODEL_NAME_SUGGESTIONS[provider] ?? []}
+            onInputValueChange={(next) => setName(next)}
+            onValueChange={(next) => next && setName(next)}
+            value={null}
+          >
+            <ComboboxInput
+              disabled={provider === "default"}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  event.preventDefault();
+                  void submit();
+                }
+              }}
+              placeholder="Search or type a model name"
+            />
+            <ComboboxContent>
+              <ComboboxEmpty>No suggestion — your own text still works.</ComboboxEmpty>
+              <ComboboxList>
+                {(item: string) => (
+                  <ComboboxItem key={item} value={item}>
+                    {item}
+                  </ComboboxItem>
+                )}
+              </ComboboxList>
+            </ComboboxContent>
+          </Combobox>
         </div>
         {error ? (
           <p className="text-sm text-destructive" role="alert">
