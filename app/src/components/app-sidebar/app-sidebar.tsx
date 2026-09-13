@@ -38,6 +38,7 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
   SidebarMenuButton,
@@ -59,7 +60,6 @@ import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { Channel } from "./channel";
 
 const appLinkOptions = { to: "/" } satisfies LinkOptions;
-const adminLinkOptions = { to: "/admin" } satisfies LinkOptions;
 const settingsLinkOptions = { to: "/settings" } satisfies LinkOptions;
 
 const userMenuItemClassName = "gap-2 px-2 py-1.5";
@@ -278,7 +278,76 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 </InputGroupAddon>
               </InputGroup>
             </SidebarMenuItem>
-            <div className="w-full h-2" />
+          </SidebarGroup>
+        </SidebarMenu>
+        {/*
+         * Standing destinations first, above the roster, the way a richer sidebar elsewhere lists
+         * its always-there sections before "Recents". Moved up from the footer, which held only
+         * these two plus the account menu — a shape that read as an afterthought under a roster
+         * that can run to hundreds of rows.
+         */}
+        <SidebarMenu className="gap-px">
+          <SidebarGroup className="gap-px">
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                className="hover:bg-foreground/5 h-9"
+                render={(props) => (
+                  <Link
+                    {...props}
+                    to="/agents"
+                    activeProps={{ className: "bg-foreground/5" }}
+                  />
+                )}
+              >
+                <div className="size-[20px] flex items-center justify-center">
+                  <IconBolt className="size-4" />
+                </div>
+                <span className="text-sm trackint-tight">Agents</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            <SidebarMenuItem>
+              <SidebarMenuButton
+                className="hover:bg-foreground/5 h-9"
+                render={(props) => (
+                  <Link
+                    {...props}
+                    to="/skills"
+                    activeProps={{ className: "bg-foreground/5" }}
+                  />
+                )}
+              >
+                <div className="size-[20px] flex items-center justify-center">
+                  <IconBox className="size-4" />
+                </div>
+                <span className="text-sm trackint-tight">Skills</span>
+              </SidebarMenuButton>
+            </SidebarMenuItem>
+            {/* Admin routes are server-guarded; hide the entry for a person who cannot open them. */}
+            {currentUser?.role === "admin" ? (
+              <SidebarMenuItem>
+                <SidebarMenuButton
+                  className="hover:bg-foreground/5 h-9"
+                  render={(props) => (
+                    <Link
+                      {...props}
+                      to="/admin"
+                      activeProps={{ className: "bg-foreground/5" }}
+                    />
+                  )}
+                >
+                  <div className="size-[20px] flex items-center justify-center">
+                    <IconShieldLock className="size-4" />
+                  </div>
+                  <span className="text-sm trackint-tight">Admin</span>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            ) : null}
+          </SidebarGroup>
+        </SidebarMenu>
+        <SidebarMenu>
+          <SidebarGroup className="gap-px">
+            <SidebarGroupLabel>Recents</SidebarGroupLabel>
+            <div className="w-full h-1" />
             {/*
              * TWO DIFFERENT NOTHINGS, AND SAYING THE WRONG ONE IS ALARMING. A roster nobody has
              * used yet needs telling how to start. A roster that simply does not match what is in
@@ -325,45 +394,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
       </SidebarContent>
       <SidebarFooter>
         <SidebarMenu className="gap-px">
-          <SidebarMenuItem>
-            {/* Beside Agents rather than inside Admin: writing a skill is something anybody does. */}
-            <SidebarMenuButton
-              className="hover:bg-foreground/5 h-10"
-              render={(props) => (
-                <Link
-                  {...props}
-                  to="/skills"
-                  activeProps={{
-                    className: "bg-foreground/5",
-                  }}
-                />
-              )}
-            >
-              <div className="size-[28px] flex items-center justify-center">
-                <IconBox />
-              </div>
-              <span className="text-sm trackint-tight">Skills</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
-          <SidebarMenuItem>
-            <SidebarMenuButton
-              className="hover:bg-foreground/5 h-10"
-              render={(props) => (
-                <Link
-                  {...props}
-                  to="/agents"
-                  activeProps={{
-                    className: "bg-foreground/5",
-                  }}
-                />
-              )}
-            >
-              <div className="size-[28px] flex items-center justify-center">
-                <IconBolt />
-              </div>
-              <span className="text-sm trackint-tight">Agents</span>
-            </SidebarMenuButton>
-          </SidebarMenuItem>
           {/* Routines live on each coworker's own dialog now, not as a nav destination: the
               question "what does this Bot do on a schedule" is asked while looking at the Bot.
               The /routines route still answers a direct link. */}
@@ -385,16 +415,6 @@ export function AppSidebar({ ...props }: React.ComponentProps<typeof Sidebar>) {
                 side="top"
                 sideOffset={8}
               >
-                {/* Admin routes are server-guarded; hide the entry for users who cannot open them. */}
-                {currentUser?.role === "admin" ? (
-                  <DropdownMenuItem
-                    className={userMenuItemClassName}
-                    render={<Link {...adminLinkOptions} />}
-                  >
-                    <IconShieldLock />
-                    Admin
-                  </DropdownMenuItem>
-                ) : null}
                 <DropdownMenuItem
                   className={userMenuItemClassName}
                   render={<Link {...settingsLinkOptions} />}
