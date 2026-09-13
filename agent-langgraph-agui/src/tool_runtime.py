@@ -26,6 +26,8 @@ class RunTools:
     context: tuple[Context, ...] = ()
     deployment: frozenset[str] = frozenset()
     assertion: str = field(default="", repr=False)
+    model_provider: str = ""
+    model_name: str = ""
 
 
 _current: ContextVar[RunTools | None] = ContextVar("openbot_run_tools", default=None)
@@ -44,6 +46,14 @@ class ToolAwareAgent(ParallelToolAgent):
         props = input.forwarded_props if isinstance(input.forwarded_props, dict) else {}
         names = props.get("openbotDeploymentTools", [])
         assertion = props.get("openbotRun", "")
+        model = props.get("openbotModel", {})
+        model_provider = ""
+        model_name = ""
+        if isinstance(model, dict):
+            provider = model.get("provider")
+            name = model.get("name")
+            model_provider = provider.strip().lower() if isinstance(provider, str) else ""
+            model_name = name.strip() if isinstance(name, str) else ""
         context = RunTools(
             tools=tuple(input.tools or []),
             context=tuple(input.context or []),
@@ -51,6 +61,8 @@ class ToolAwareAgent(ParallelToolAgent):
             if isinstance(names, list)
             else frozenset(),
             assertion=assertion if isinstance(assertion, str) else "",
+            model_provider=model_provider,
+            model_name=model_name,
         )
         # The maintained endpoint clones this subclass per request. ContextVar
         # also isolates graph tasks across concurrent requests and resets on
@@ -65,8 +77,10 @@ class ToolAwareAgent(ParallelToolAgent):
                 not in {
                     "openbotRun",
                     "openbotDeploymentTools",
+                    "openbotModel",
                     "openbot_run",
                     "openbot_deployment_tools",
+                    "openbot_model",
                 }
             }
             async with aclosing(

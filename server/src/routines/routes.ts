@@ -40,6 +40,55 @@ export function createRoutineRoutes(
     return context.json({ routines: routines.map(routineDto) });
   });
 
+  routes.post("/", requireUser, async (context) => {
+    const body = await context.req.json().catch(() => null);
+    const input = body as {
+      agentId?: unknown;
+      instruction?: unknown;
+      cron?: unknown;
+      timezone?: unknown;
+      channelId?: unknown;
+    } | null;
+
+    if (typeof input?.agentId !== "string" || input.agentId.trim() === "") {
+      return context.json({ error: "agentId is required." }, 400);
+    }
+    if (
+      typeof input.instruction !== "string" ||
+      input.instruction.trim() === ""
+    ) {
+      return context.json({ error: "instruction is required." }, 400);
+    }
+    if (typeof input.cron !== "string" || input.cron.trim() === "") {
+      return context.json({ error: "cron is required." }, 400);
+    }
+    if (input.timezone !== undefined && typeof input.timezone !== "string") {
+      return context.json({ error: "timezone must be a string." }, 400);
+    }
+    if (input.channelId !== undefined && typeof input.channelId !== "string") {
+      return context.json({ error: "channelId must be a string." }, 400);
+    }
+
+    try {
+      const routine = await routineStore.create({
+        ownerUserId: context.var.actor.id,
+        agentId: input.agentId.trim(),
+        instruction: input.instruction,
+        cron: input.cron,
+        timezone: input.timezone,
+        channelId: input.channelId,
+      });
+      const [summary] = (
+        await routineStore.listFor(context.var.actor.id)
+      ).filter((candidate) => candidate.id === routine.id);
+      return context.json({
+        routine: summary ? routineDto(summary) : { id: routine.id },
+      });
+    } catch (error) {
+      return mapStoreError(context, error);
+    }
+  });
+
   routes.put("/:id/enabled", requireUser, async (context) => {
     const body = await context.req.json().catch(() => null);
     const enabled = (body as { enabled?: unknown } | null)?.enabled;

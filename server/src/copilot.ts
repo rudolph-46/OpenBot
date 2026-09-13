@@ -59,6 +59,7 @@ type RegisteredBuiltInAgent = {
   name: string;
   type: "built_in";
   systemPrompt: string;
+  model?: { provider: string; name: string };
 };
 
 type RegisteredRemoteAgentFacts = {
@@ -67,6 +68,7 @@ type RegisteredRemoteAgentFacts = {
   endpoint: string;
   /** Which agent on the endpoint, for a server that serves a roster. See `remoteTransport`. */
   remoteAgentId?: string;
+  model?: { provider: string; name: string };
   standingMessage: StandingRoleMessage;
   /** The key this agent sits behind, resolved from the vault at load time. Never logged. */
   headers?: Record<string, string>;
@@ -117,6 +119,7 @@ export type AgentStandingProfile = {
   name: string;
   title: string;
   roleDescription: string;
+  instructions?: string;
 };
 
 /**
@@ -135,7 +138,7 @@ export function standingRoleMessage(
     role: "system",
     content: [
       `You are ${profile.name}, ${profile.title}.`,
-      profile.roleDescription,
+      profile.instructions ?? profile.roleDescription,
       "This standing role applies in every channel. Treat channel messages as task-specific instructions within it.",
       /*
        * Here rather than in the package, because for a remote Bot the standing role is the only
@@ -198,6 +201,7 @@ export function registeredAgentFromRow(
           name: row.name,
           type: "built_in",
           systemPrompt: trimmedSystemPrompt,
+          ...modelOverrideOf(configuration),
         }
       : null;
   }
@@ -220,9 +224,20 @@ export function registeredAgentFromRow(
         ...(typeof remoteAgentId === "string" && remoteAgentId.length > 0
           ? { remoteAgentId }
           : {}),
+        ...modelOverrideOf(configuration),
         standingMessage: standingRoleMessage(row),
       }
     : null;
+}
+
+function modelOverrideOf(configuration: Record<string, unknown>) {
+  const model = configuration.model;
+  if (!isPlainObject(model)) return {};
+  const provider = model.provider;
+  const name = model.name;
+  return typeof provider === "string" && typeof name === "string"
+    ? { model: { provider, name } }
+    : {};
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -327,7 +342,9 @@ export function builtInAgentConfiguration(
   const standing = standingInstructionsGuidance(standingInstructions);
 
   return {
-    model: `${model.provider}/${model.defaultModel}`,
+    model: agent.model
+      ? `${agent.model.provider}/${agent.model.name}`
+      : `${model.provider}/${model.defaultModel}`,
     /*
      * The package's role, then the person's own standing instructions, then what this Bot actually
      * holds, then the computer.
@@ -1190,6 +1207,7 @@ function remoteAgentWithStandingRole(
            * cannot prove whose run it is should not be spending anybody's grants.
            */
           {}),
+      ...(agent.model ? { openbotModel: agent.model } : {}),
     };
     /*
      * The same guard a built-in Bot gets in `BuiltInAgentWithSaneHistory`, applied here because a

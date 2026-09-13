@@ -170,6 +170,10 @@ export function checkProposal(args: {
     title: typeof args.title === "string" ? args.title : "",
     roleDescription:
       typeof args.roleDescription === "string" ? args.roleDescription : "",
+    description:
+      typeof args.roleDescription === "string" ? args.roleDescription : "",
+    instructions:
+      typeof args.roleDescription === "string" ? args.roleDescription : "",
     visibility: "private",
     endpoint: "",
     authValue: "",

@@ -92,6 +92,7 @@ function agent(
     title: "Title",
     roleDescription: "Role",
     avatarSeed: "seed",
+    model: null,
     visibility: "private",
     endpoint: null,
     builtIn: true,

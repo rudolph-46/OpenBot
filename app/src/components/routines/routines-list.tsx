@@ -18,6 +18,7 @@ import {
   EmptyHeader,
   EmptyTitle,
 } from "@/components/ui/empty";
+import { Input } from "@/components/ui/input";
 import {
   Item,
   ItemActions,
@@ -26,9 +27,19 @@ import {
   ItemFooter,
   ItemTitle,
 } from "@/components/ui/item";
+import { Label } from "@/components/ui/label";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
+import { Textarea } from "@/components/ui/textarea";
 import { relativeTime } from "@/lib/relative-time";
 import {
+  createRoutineMutationOptions,
   deleteRoutineMutationOptions,
   setRoutineEnabledMutationOptions,
 } from "@/lib/routines/mutations";
@@ -122,6 +133,127 @@ function Chip({
   );
 }
 
+const DEFAULT_TIMEZONE = "Europe/Paris";
+
+const scheduleOptions = [
+  { value: "daily-09", label: "Daily at 09:00", cron: "0 9 * * *" },
+  { value: "daily-14", label: "Daily at 14:00", cron: "0 14 * * *" },
+  { value: "weekdays-09", label: "Weekdays at 09:00", cron: "0 9 * * 1-5" },
+  { value: "weekly-monday-09", label: "Mondays at 09:00", cron: "0 9 * * 1" },
+  { value: "custom", label: "Custom cron", cron: "" },
+] as const;
+
+function cronFor(value: string, custom: string) {
+  const option = scheduleOptions.find((candidate) => candidate.value === value);
+  if (!option) return custom;
+  return option.value === "custom" ? custom : option.cron;
+}
+
+function CreateRoutineForm({ agentId }: { agentId: string }) {
+  const createRoutine = useMutation(createRoutineMutationOptions(queryClient));
+  const [instruction, setInstruction] = useState("");
+  const [schedule, setSchedule] =
+    useState<(typeof scheduleOptions)[number]["value"]>("daily-14");
+  const [customCron, setCustomCron] = useState("");
+  const [timezone, setTimezone] = useState(DEFAULT_TIMEZONE);
+
+  const cron = cronFor(schedule, customCron);
+  const canSubmit = instruction.trim().length > 0 && cron.trim().length > 0;
+
+  return (
+    <form
+      className="mb-4 rounded-lg border bg-muted/20 p-3"
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (!canSubmit) return;
+        createRoutine.mutate(
+          {
+            agentId,
+            instruction,
+            cron,
+            timezone,
+          },
+          {
+            onSuccess: () => {
+              setInstruction("");
+              setSchedule("daily-14");
+              setCustomCron("");
+            },
+          },
+        );
+      }}
+    >
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_220px_180px_auto]">
+        <div className="grid gap-1.5">
+          <Label htmlFor={`routine-instruction-${agentId}`}>Instruction</Label>
+          <Textarea
+            className="min-h-20 resize-none"
+            id={`routine-instruction-${agentId}`}
+            onChange={(event) => setInstruction(event.target.value)}
+            placeholder="Extract MinaJobs data and post the summary here."
+            value={instruction}
+          />
+        </div>
+        <div className="grid content-start gap-1.5">
+          <Label>Schedule</Label>
+          <Select
+            onValueChange={(value) =>
+              setSchedule(value as (typeof scheduleOptions)[number]["value"])
+            }
+            value={schedule}
+          >
+            <SelectTrigger className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent align="start">
+              {scheduleOptions.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {schedule === "custom" ? (
+            <Input
+              aria-label="Custom cron"
+              onChange={(event) => setCustomCron(event.target.value)}
+              placeholder="0 14 * * *"
+              value={customCron}
+            />
+          ) : null}
+        </div>
+        <div className="grid content-start gap-1.5">
+          <Label htmlFor={`routine-timezone-${agentId}`}>Timezone</Label>
+          <Input
+            id={`routine-timezone-${agentId}`}
+            onChange={(event) => setTimezone(event.target.value)}
+            value={timezone}
+          />
+        </div>
+        <div className="flex items-end">
+          <Button
+            className="w-full lg:w-auto"
+            disabled={!canSubmit || createRoutine.isPending}
+            type="submit"
+          >
+            {createRoutine.isPending ? "Creating…" : "Create routine"}
+          </Button>
+        </div>
+      </div>
+      {createRoutine.error ? (
+        <p className="mt-2 text-destructive text-sm" role="alert">
+          {createRoutine.error.message}
+        </p>
+      ) : null}
+      <p className="mt-2 text-muted-foreground text-xs">
+        The routine will appear below and post back into this agent's channel.
+        If the agent has several channels, create it from the exact channel by
+        asking the agent there.
+      </p>
+    </form>
+  );
+}
+
 /**
  * The signed-in person's standing instructions: a switch to stop one taking effect, and a delete
  * that ends it for good.
@@ -150,6 +282,8 @@ export function RoutinesList({
 
   return (
     <PageSection className={embedded ? "mt-0" : undefined}>
+      {agentId ? <CreateRoutineForm agentId={agentId} /> : null}
+
       {setEnabled.error ? (
         <p className="text-destructive text-sm" role="alert">
           {setEnabled.error.message}

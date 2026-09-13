@@ -2,6 +2,10 @@ import { queryOptions } from "@tanstack/react-query";
 import { client, tryClient } from "@/lib/client";
 
 export type AgentVisibility = "public" | "private";
+export type AgentModelConfig = {
+  provider: string;
+  name: string;
+};
 
 /**
  * A coworker as the browser sees it.
@@ -14,7 +18,10 @@ export type AgentProfile = {
   name: string;
   title: string;
   roleDescription: string;
+  description?: string;
+  instructions?: string;
   avatarSeed: string;
+  model: AgentModelConfig | null;
   visibility: AgentVisibility;
   /** Where this coworker runs. Null for the Bot in the box. */
   endpoint: string | null;

@@ -138,15 +138,9 @@ describe("whose credential a server uses", () => {
   });
 
   test("a vendor this build has never heard of is not an entry", () => {
-    // The five bearer vendors that used to be asserted here are gone. What matters now is the same
-    // property from the other side: a key with no entry resolves to nothing rather than to a default.
-    for (const key of [
-      "atlassian",
-      "box",
-      "slack",
-      "salesforce",
-      "servicenow",
-    ]) {
+    // What matters is the fail-closed property from the other side: a key with no entry resolves to
+    // nothing rather than to a default.
+    for (const key of ["box", "salesforce", "servicenow"]) {
       expect(catalogueEntry(key)).toBeNull();
       expect(resolveServerUrl(key)).toBeNull();
     }
@@ -240,6 +234,108 @@ describe("Notion", () => {
     }
     expect(classifyTool(entry, "notion-search", true)).toBe("read");
     expect(classifyTool(entry, "brand-new-tool", false)).toBe("write");
+  });
+});
+
+describe("the expanded connector catalogue", () => {
+  test("Google Workspace entries pin the official product MCP endpoints", () => {
+    expect(resolveServerUrl("gmail")?.url).toBe(
+      "https://gmailmcp.googleapis.com/mcp/v1",
+    );
+    expect(resolveServerUrl("google-calendar")?.url).toBe(
+      "https://calendarmcp.googleapis.com/mcp/v1",
+    );
+    expect(resolveServerUrl("google-sheets")?.url).toBe(
+      "https://sheetsmcp.googleapis.com/mcp/v1",
+    );
+    expect(resolveServerUrl("google-docs")?.url).toBe(
+      "https://docsmcp.googleapis.com/mcp/v1",
+    );
+  });
+
+  test("the team-work and data connectors pin reviewed remote MCP endpoints", () => {
+    expect(resolveServerUrl("atlassian")?.url).toBe(
+      "https://mcp.atlassian.com/v2/mcp",
+    );
+    expect(resolveServerUrl("github")?.url).toBe(
+      "https://api.githubcopilot.com/mcp/readonly",
+    );
+    expect(resolveServerUrl("slack")?.url).toBe("https://mcp.slack.com/mcp");
+    expect(resolveServerUrl("airtable")?.url).toBe(
+      "https://mcp.airtable.com/mcp",
+    );
+    expect(resolveServerUrl("calendly")?.url).toBe(
+      "https://mcp.calendly.com/mcp",
+    );
+    expect(resolveServerUrl("apify")?.url).toBe("https://mcp.apify.com");
+    expect(resolveServerUrl("neon")?.url).toBe("https://mcp.neon.tech/mcp");
+  });
+
+  test("shared-token connectors say so explicitly", () => {
+    expect(
+      serverCredentialKind(catalogueEntry("github") as CatalogueEntry),
+    ).toBe("mcp");
+  });
+
+  test("person-oauth connectors are not wired to a deployment token", () => {
+    for (const key of [
+      "gmail",
+      "google-calendar",
+      "google-sheets",
+      "google-docs",
+      "atlassian",
+      "slack",
+      "airtable",
+      "calendly",
+      "apify",
+      "neon",
+    ]) {
+      const entry = catalogueEntry(key);
+      expect(entry?.auth.kind).toBe("user-oauth");
+      expect(serverCredentialKind(entry as CatalogueEntry)).toBeNull();
+    }
+  });
+
+  test("dynamic OAuth connectors self-register instead of asking for a pasted client", () => {
+    for (const key of ["atlassian", "airtable", "calendly", "apify", "neon"]) {
+      const entry = catalogueEntry(key);
+      if (entry?.auth.kind !== "user-oauth") throw new Error("wrong auth kind");
+      expect(entry.auth.clientRegistration).toBe("dynamic");
+      expect(entry.auth.registrationUrl?.startsWith("https://")).toBe(true);
+    }
+  });
+
+  test("Apify treats Actor execution and task publication as writes", () => {
+    const entry = catalogueEntry("apify");
+    expect(entry?.writeTools).toEqual([
+      "call-actor",
+      "apify/rag-web-browser",
+      "create-actor-task",
+      "update-actor-task",
+      "publish-actor-task",
+      "unpublish-actor-task",
+    ]);
+    expect(classifyTool(entry, "search-actors", true)).toBe("read");
+    expect(classifyTool(entry, "fetch-apify-docs", true)).toBe("read");
+    expect(classifyTool(entry, "call-actor", true)).toBe("write");
+    expect(classifyTool(entry, "apify/rag-web-browser", true)).toBe("write");
+  });
+
+  test("Neon pins OAuth and treats SQL execution as a write", () => {
+    const entry = catalogueEntry("neon");
+    expect(entry?.auth.kind).toBe("user-oauth");
+    if (entry?.auth.kind !== "user-oauth") throw new Error("wrong auth kind");
+    expect(entry.auth.authorizationUrl).toBe(
+      "https://mcp.neon.tech/api/authorize",
+    );
+    expect(entry.auth.tokenUrl).toBe("https://mcp.neon.tech/api/token");
+    expect(entry.auth.registrationUrl).toBe(
+      "https://mcp.neon.tech/api/register",
+    );
+    expect(classifyTool(entry, "run_sql", true)).toBe("write");
+    expect(classifyTool(entry, "run_sql_transaction", true)).toBe("write");
+    expect(classifyTool(entry, "get_database_tables", true)).toBe("read");
+    expect(classifyTool(entry, "describe_table_schema", true)).toBe("read");
   });
 });
 

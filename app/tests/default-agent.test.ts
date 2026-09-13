@@ -9,6 +9,7 @@ import type { AgentProfile } from "@/lib/agents/queries";
 function agent(id: string, name = id): AgentProfile {
   return {
     avatarSeed: id,
+    model: null,
     builtIn: id === "general-assistant",
     canManage: true,
     endpoint: id === PICKED_HARNESS_AGENT_ID ? "http://127.0.0.1:4201" : null,

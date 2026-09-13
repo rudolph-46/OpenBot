@@ -18,6 +18,7 @@ from langgraph.graph import START, MessagesState, StateGraph
 from .tool_runtime import (
     ToolAwareAgent,
     bind_tools,
+    current_tools,
     execute_tools,
     model_messages,
     next_step,
@@ -104,7 +105,7 @@ def _chatgpt_auth_file(store: str) -> Path:
     return path
 
 
-def _model():
+def _model(model_provider: str = "", model_name: str = ""):
     """The model this Bot thinks with, chosen by which credential the deployment gave it.
 
     A SIGNED-IN CHATGPT PLAN IS NOT AN API KEY, and this is the only place that difference shows up.
@@ -117,7 +118,7 @@ def _model():
     A recognized `provider:model` choice keeps its provider. Otherwise the model is an opaque ID
     and the selected provider is passed separately, including when that ID contains a colon.
     """
-    configured_model = os.environ.get("BOT_MODEL")
+    configured_model = model_name or os.environ.get("BOT_MODEL")
     model = (configured_model or "gpt-4o-mini").strip()
     store = (os.environ.get("CHATGPT_AUTH_FILE") or "").strip()
     if store:
@@ -140,7 +141,7 @@ def _model():
         )
 
     _normalize_openai_base_url()
-    provider = (os.environ.get("BOT_PROVIDER") or "").strip() or "openai"
+    provider = (model_provider or os.environ.get("BOT_PROVIDER") or "").strip() or "openai"
     provider = _resolve_provider(provider)
     if not configured_model:
         model = {
@@ -158,8 +159,15 @@ def _model():
 
 
 async def answer(state: MessagesState):
+    context = current_tools()
     messages = model_messages(state["messages"])
-    return {"messages": [await bind_tools(_model()).ainvoke(messages)]}
+    return {
+        "messages": [
+            await bind_tools(
+                _model(context.model_provider, context.model_name)
+            ).ainvoke(messages)
+        ]
+    }
 
 
 builder = StateGraph(MessagesState)

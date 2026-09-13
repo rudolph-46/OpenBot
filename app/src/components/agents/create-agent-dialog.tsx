@@ -20,6 +20,13 @@ import {
 } from "@/components/ui/field";
 import { Input } from "@/components/ui/input";
 import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
   Questionnaire,
   QuestionnaireChoice,
   QuestionnaireChoiceDescription,
@@ -47,6 +54,7 @@ import { useStartChannel } from "@/lib/channels/start";
 import { client } from "@/lib/client";
 import { grantPlugin, invalidatePlugins } from "@/lib/plugins/mutations";
 import {
+  type CatalogueItem,
   type PluginServer,
   type PluginSkill,
   pluginsPageQueryOptions,
@@ -74,7 +82,7 @@ export function CreateAgentDialog({
 }) {
   return (
     <Dialog onOpenChange={(next) => !next && onClose()} open={open}>
-      <DialogContent>
+      <DialogContent className="w-[calc(100%-2rem)] max-w-[920px]">
         {/* All wizard state lives below DialogContent, whose portal unmounts on close: dismissing
             the dialog mid-way discards the half-answered steps rather than pickling them. */}
         <CreateAgentWizard onClose={onClose} onCreated={onCreated} />
@@ -86,13 +94,35 @@ export function CreateAgentDialog({
 /** The steps, in the order they are asked. The name is the questionnaire item's name. */
 const STEPS = [
   "identity",
+  "knowledge",
   "visibility",
   "kind",
+  "plugins",
   "skills",
   "tools",
   "routine",
 ] as const;
 type StepName = (typeof STEPS)[number];
+
+const DEFAULT_TIMEZONE = "Europe/Paris";
+
+const scheduleOptions = [
+  { value: "daily-09", label: "Daily at 09:00", cron: "0 9 * * *" },
+  { value: "daily-14", label: "Daily at 14:00", cron: "0 14 * * *" },
+  { value: "weekdays-09", label: "Weekdays at 09:00", cron: "0 9 * * 1-5" },
+  { value: "weekly-monday-09", label: "Mondays at 09:00", cron: "0 9 * * 1" },
+  { value: "custom", label: "Custom cron", cron: "" },
+] as const;
+
+type ScheduleValue = (typeof scheduleOptions)[number]["value"];
+
+function scheduleLabel(value: ScheduleValue, customCron: string) {
+  const option = scheduleOptions.find((candidate) => candidate.value === value);
+  if (!option) return customCron;
+  return option.value === "custom"
+    ? customCron
+    : `${option.label} (${option.cron})`;
+}
 
 /** The two ways a coworker can be seen. */
 const VISIBILITY_OPTIONS: Array<{
@@ -142,6 +172,8 @@ const identitySchema = agentFormSchema.pick({
   name: true,
   title: true,
   roleDescription: true,
+  description: true,
+  instructions: true,
 });
 
 type IdentityField = keyof typeof identitySchema.shape;
@@ -172,6 +204,34 @@ function toggled(set: ReadonlySet<string>, member: string): Set<string> {
   return next;
 }
 
+function knowledgeSetupPrompt(
+  links: string,
+  files: readonly File[],
+): string | null {
+  const trimmedLinks = links
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  if (trimmedLinks.length === 0 && files.length === 0) return null;
+  const lines = ["Use these knowledge sources when configuring this coworker."];
+  if (trimmedLinks.length > 0) {
+    lines.push("Links:");
+    lines.push(...trimmedLinks.map((link) => `- ${link}`));
+  }
+  if (files.length > 0) {
+    lines.push("Documents selected during setup:");
+    lines.push(
+      ...files.map(
+        (file) => `- ${file.name} (${Math.ceil(file.size / 1024)} KB)`,
+      ),
+    );
+    lines.push(
+      "Ask me to attach these documents in this channel so you can read their contents.",
+    );
+  }
+  return lines.join("\n");
+}
+
 /** A pane arrives from the side the journey is moving toward, and leaves out the other. */
 const variants = {
   initial: (direction: number) => ({ x: `${110 * direction}%`, opacity: 0 }),
@@ -188,7 +248,8 @@ function CreateAgentWizard({
 }) {
   const createAgent = useMutation(createAgentMutationOptions(queryClient));
   const { data: me } = useQuery(currentUserQueryOptions());
-  const { data: plugins } = useQuery(pluginsPageQueryOptions());
+  const pluginsQuery = useQuery(pluginsPageQueryOptions());
+  const { data: plugins } = pluginsQuery;
   const { start: startChannel } = useStartChannel();
   /*
    * Whether "built-in" is a coworker this deployment can actually make. Assumed true while the
@@ -239,7 +300,19 @@ function CreateAgentWizard({
   const [appliedToolRefs, setAppliedToolRefs] = useState<Set<string>>(
     new Set(),
   );
-  const [routineText, setRoutineText] = useState("");
+  const [selectedPluginKeys, setSelectedPluginKeys] = useState<Set<string>>(
+    new Set(),
+  );
+  const [installedPluginKeys, setInstalledPluginKeys] = useState<Set<string>>(
+    new Set(),
+  );
+  const [knowledgeLinks, setKnowledgeLinks] = useState("");
+  const [knowledgeFiles, setKnowledgeFiles] = useState<File[]>([]);
+  const [routineTask, setRoutineTask] = useState("");
+  const [routineSchedule, setRoutineSchedule] =
+    useState<ScheduleValue>("daily-09");
+  const [routineCustomCron, setRoutineCustomCron] = useState("");
+  const [routineTimezone, setRoutineTimezone] = useState(DEFAULT_TIMEZONE);
 
   const last = step === STEPS.length - 1;
   const set = <K extends keyof AgentFormValues>(
@@ -286,6 +359,37 @@ function CreateAgentWizard({
   };
 
   /** Grant every selected skill and tool to the coworker just created, skipping what already holds. */
+  const installSelectedPlugins = async () => {
+    if (selectedPluginKeys.size === 0) return;
+    setApplying(true);
+    setApplyError(null);
+    try {
+      const existing = new Set(
+        (plugins?.servers ?? []).map((server) => server.id),
+      );
+      for (const key of selectedPluginKeys) {
+        if (existing.has(key) || installedPluginKeys.has(key)) continue;
+        await client("/api/plugins/servers", {
+          method: "POST",
+          body: { key },
+          fallback: "The plugin could not be added.",
+        });
+      }
+      setInstalledPluginKeys(new Set(selectedPluginKeys));
+      await invalidatePlugins(queryClient);
+      await pluginsQuery.refetch();
+    } catch (error) {
+      setApplyError(
+        error instanceof Error
+          ? error.message
+          : "That plugin could not be added.",
+      );
+      throw error;
+    } finally {
+      setApplying(false);
+    }
+  };
+
   const applySelections = async () => {
     if (!agentId) return;
     setApplying(true);
@@ -364,6 +468,16 @@ function CreateAgentWizard({
       return;
     }
 
+    if (STEPS[step] === "plugins") {
+      try {
+        await installSelectedPlugins();
+      } catch {
+        return;
+      }
+      go(step + 1);
+      return;
+    }
+
     if (!last) {
       go(step + 1);
       return;
@@ -378,10 +492,30 @@ function CreateAgentWizard({
       return; // applyError is already set; stay on this step rather than finish partway.
     }
 
-    if (agentId && routineText.trim() !== "") {
+    const knowledgePrompt = knowledgeSetupPrompt(
+      knowledgeLinks,
+      knowledgeFiles,
+    );
+    if (agentId && (routineTask.trim() !== "" || knowledgePrompt)) {
+      const frequency = scheduleLabel(
+        routineSchedule,
+        routineCustomCron.trim(),
+      );
+      const routinePrompt =
+        routineTask.trim() === ""
+          ? null
+          : [
+              "Create a routine for this coworker with these settings.",
+              `Task: ${routineTask.trim()}`,
+              `Frequency: ${frequency}`,
+              `Timezone: ${routineTimezone.trim() || DEFAULT_TIMEZONE}`,
+            ].join("\n");
+      const setupPrompt = [knowledgePrompt, routinePrompt]
+        .filter(Boolean)
+        .join("\n\n");
       // Navigates to the new channel itself, which is what leaves /agents and this dialog with
       // it — calling onClose here as well would fire a second, competing navigation back to it.
-      await startChannel(agentId, routineText.trim());
+      await startChannel(agentId, setupPrompt);
       return;
     }
     if (agentId) onCreated(agentId);
@@ -461,6 +595,13 @@ function CreateAgentWizard({
                         set={set}
                         values={values}
                       />
+                    ) : STEPS[step] === "knowledge" ? (
+                      <KnowledgeStep
+                        files={knowledgeFiles}
+                        links={knowledgeLinks}
+                        onFilesChange={setKnowledgeFiles}
+                        onLinksChange={setKnowledgeLinks}
+                      />
                     ) : STEPS[step] === "visibility" ? (
                       <VisibilityStep set={set} values={values} />
                     ) : STEPS[step] === "kind" ? (
@@ -484,6 +625,17 @@ function CreateAgentWizard({
                         showKindError={tried && kind === null}
                         testing={testing}
                         values={values}
+                      />
+                    ) : STEPS[step] === "plugins" ? (
+                      <PluginsStep
+                        catalogue={plugins?.catalogue ?? []}
+                        onToggle={(key) =>
+                          setSelectedPluginKeys((current) =>
+                            toggled(current, key),
+                          )
+                        }
+                        selected={selectedPluginKeys}
+                        servers={plugins?.servers ?? []}
                       />
                     ) : STEPS[step] === "skills" ? (
                       <SkillsStep
@@ -509,8 +661,14 @@ function CreateAgentWizard({
                       />
                     ) : (
                       <RoutineStep
-                        onChange={setRoutineText}
-                        value={routineText}
+                        customCron={routineCustomCron}
+                        onCustomCronChange={setRoutineCustomCron}
+                        onScheduleChange={setRoutineSchedule}
+                        onTaskChange={setRoutineTask}
+                        onTimezoneChange={setRoutineTimezone}
+                        schedule={routineSchedule}
+                        task={routineTask}
+                        timezone={routineTimezone}
                       />
                     )}
                   </motion.div>
@@ -545,11 +703,13 @@ function CreateAgentWizard({
             >
               {last
                 ? createAgent.isPending || applying
-                  ? "Creating…"
+                  ? "Working…"
                   : "Create coworker"
-                : STEPS[step] === "kind" && createAgent.isPending
-                  ? "Creating…"
-                  : "Continue"}
+                : applying
+                  ? "Working…"
+                  : STEPS[step] === "kind" && createAgent.isPending
+                    ? "Creating…"
+                    : "Continue"}
             </Button>
           </div>
         </Questionnaire>
@@ -604,7 +764,7 @@ function IdentityStep({
     <StepItem name="identity">
       <QuestionnaireTitle>Who is this coworker?</QuestionnaireTitle>
       <QuestionnaireDescription>
-        The role you write here applies in every channel this coworker works in.
+        Define how it appears, what it is for, and the instructions it follows.
       </QuestionnaireDescription>
       <Field>
         <FieldLabel>Avatar</FieldLabel>
@@ -616,9 +776,7 @@ function IdentityStep({
                 aria-label="Use this avatar"
                 aria-pressed={chosen}
                 className={`rounded-full ring-2 transition-colors ${
-                  chosen
-                    ? "ring-primary"
-                    : "ring-transparent hover:ring-border"
+                  chosen ? "ring-primary" : "ring-transparent hover:ring-border"
                 }`}
                 key={seed}
                 onClick={() => onSelectAvatar(seed)}
@@ -628,7 +786,12 @@ function IdentityStep({
               </button>
             );
           })}
-          <Button onClick={onShuffleAvatars} size="sm" type="button" variant="outline">
+          <Button
+            onClick={onShuffleAvatars}
+            size="sm"
+            type="button"
+            variant="outline"
+          >
             Shuffle
           </Button>
         </div>
@@ -661,18 +824,117 @@ function IdentityStep({
           ) : null}
         </Field>
         <Field data-invalid={errors.roleDescription ? true : undefined}>
-          <FieldLabel htmlFor="create-agent-role">Role</FieldLabel>
+          <FieldLabel htmlFor="create-agent-description">
+            Description
+          </FieldLabel>
           <Textarea
-            aria-invalid={errors.roleDescription ? true : undefined}
-            id="create-agent-role"
-            onChange={(event) => set("roleDescription", event.target.value)}
-            placeholder="Review receipts, categorize expenses, and prepare reimbursement reports."
-            rows={4}
-            value={values.roleDescription}
+            aria-invalid={errors.description ? true : undefined}
+            id="create-agent-description"
+            onChange={(event) => {
+              const next = event.target.value;
+              set("description", next);
+              if (
+                !values.roleDescription ||
+                values.roleDescription === values.description
+              ) {
+                set("roleDescription", next);
+              }
+            }}
+            placeholder="Reviews expenses, follows up on missing receipts, and keeps finance work moving."
+            rows={3}
+            value={values.description}
           />
-          {errors.roleDescription ? (
-            <FieldError errors={[{ message: errors.roleDescription }]} />
+          {errors.description ? (
+            <FieldError errors={[{ message: errors.description }]} />
           ) : null}
+        </Field>
+        <Field data-invalid={errors.instructions ? true : undefined}>
+          <FieldLabel htmlFor="create-agent-instructions">
+            Instructions
+          </FieldLabel>
+          <Textarea
+            aria-invalid={errors.instructions ? true : undefined}
+            id="create-agent-instructions"
+            onChange={(event) => {
+              const next = event.target.value;
+              set("roleDescription", next);
+              set("instructions", next);
+            }}
+            placeholder="Review receipts, categorize expenses, ask for missing evidence, and never invent transaction details."
+            rows={6}
+            value={values.instructions}
+          />
+          {errors.instructions ? (
+            <FieldError errors={[{ message: errors.instructions }]} />
+          ) : null}
+        </Field>
+      </FieldGroup>
+    </StepItem>
+  );
+}
+
+function KnowledgeStep({
+  links,
+  files,
+  onLinksChange,
+  onFilesChange,
+}: {
+  links: string;
+  files: readonly File[];
+  onLinksChange: (value: string) => void;
+  onFilesChange: (files: File[]) => void;
+}) {
+  return (
+    <StepItem name="knowledge">
+      <QuestionnaireTitle>What should it know?</QuestionnaireTitle>
+      <QuestionnaireDescription>
+        Optional. Add URLs, YouTube links, or documents to bring into the setup
+        channel for this coworker.
+      </QuestionnaireDescription>
+      <FieldGroup className="grid gap-4">
+        <Field>
+          <FieldLabel htmlFor="create-agent-knowledge-links">
+            Links and YouTube videos
+          </FieldLabel>
+          <Textarea
+            id="create-agent-knowledge-links"
+            onChange={(event) => onLinksChange(event.target.value)}
+            placeholder={
+              "https://example.com/process\nhttps://youtube.com/watch?v=..."
+            }
+            rows={5}
+            value={links}
+          />
+          <FieldDescription>
+            One link per line. The setup channel will ask the coworker to use
+            these as sources.
+          </FieldDescription>
+        </Field>
+        <Field>
+          <FieldLabel htmlFor="create-agent-knowledge-files">
+            Documents
+          </FieldLabel>
+          <Input
+            id="create-agent-knowledge-files"
+            multiple
+            onChange={(event) =>
+              onFilesChange(Array.from(event.currentTarget.files ?? []))
+            }
+            type="file"
+          />
+          {files.length > 0 ? (
+            <div className="rounded-md border bg-muted/30 p-2 text-sm">
+              {files.map((file) => (
+                <div className="truncate" key={`${file.name}-${file.size}`}>
+                  {file.name}
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <FieldDescription>
+            File bytes are not persisted as agent knowledge yet. They are listed
+            in the setup channel so you can attach them there.
+          </FieldDescription>
         </Field>
       </FieldGroup>
     </StepItem>
@@ -876,6 +1138,73 @@ function ToggleRow({
   );
 }
 
+function PluginsStep({
+  catalogue,
+  servers,
+  selected,
+  onToggle,
+}: {
+  catalogue: CatalogueItem[];
+  servers: PluginServer[];
+  selected: ReadonlySet<string>;
+  onToggle: (key: string) => void;
+}) {
+  const installed = new Set(servers.map((server) => server.id));
+  const available = catalogue.filter((entry) => !installed.has(entry.key));
+
+  return (
+    <StepItem name="plugins">
+      <QuestionnaireTitle>Which plugins should be active?</QuestionnaireTitle>
+      <QuestionnaireDescription>
+        Optional. Add deployment plugins here first; the next step lets this
+        coworker hold individual tools from the plugins that expose them.
+      </QuestionnaireDescription>
+      {available.length === 0 ? (
+        <Empty className="mt-4 h-[120px] border border-dashed">
+          <EmptyHeader>
+            <EmptyTitle className="text-muted-foreground">
+              Every catalogue plugin is already active.
+            </EmptyTitle>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <div className="mt-2 grid gap-2 md:grid-cols-2">
+          {available.map((entry) => (
+            <button
+              className={`rounded-lg border p-3 text-left transition-colors ${
+                selected.has(entry.key)
+                  ? "border-primary bg-primary/5"
+                  : "border-border hover:bg-muted/50"
+              }`}
+              key={entry.key}
+              onClick={() => onToggle(entry.key)}
+              type="button"
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="font-medium text-sm">{entry.title}</p>
+                  <p className="mt-1 line-clamp-2 text-muted-foreground text-xs">
+                    {entry.summary}
+                  </p>
+                </div>
+                <span className="rounded bg-muted px-2 py-1 text-muted-foreground text-xs">
+                  {entry.auth === "user-oauth"
+                    ? "OAuth"
+                    : entry.auth === "deployment-bearer"
+                      ? "Key"
+                      : entry.auth === "builtin"
+                        ? "Built-in"
+                        : "No auth"}
+                </span>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+    </StepItem>
+  );
+}
+
 function SkillsStep({
   skills,
   catalogue,
@@ -904,8 +1233,8 @@ function SkillsStep({
       <QuestionnaireTitle>Which skills does it carry?</QuestionnaireTitle>
       <QuestionnaireDescription>
         Optional. A skill is an instruction, invoked with <code>/</code>; this
-        coworker only carries the ones ticked here, and more can be added
-        later from its own page.
+        coworker only carries the ones ticked here, and more can be added later
+        from its own page.
       </QuestionnaireDescription>
       {existing.length === 0 && discoverable.length === 0 ? (
         <Empty className="mt-4 h-[120px] border border-dashed">
@@ -960,17 +1289,21 @@ function ToolsStep({
     <StepItem name="tools">
       <QuestionnaireTitle>Which tools can it call?</QuestionnaireTitle>
       <QuestionnaireDescription>
-        Optional. From the plugins this deployment already holds. Every call
-        is still decided, policy-checked and audited when it happens — this
-        only says which tools this coworker may be offered at all.
+        Optional. From the plugins this deployment already holds. Every call is
+        still decided, policy-checked and audited when it happens — this only
+        says which tools this coworker may be offered at all.
       </QuestionnaireDescription>
       {withTools.length === 0 ? (
         <Empty className="mt-4 h-[120px] border border-dashed">
           <EmptyHeader>
             <EmptyTitle className="text-muted-foreground">
-              This deployment has no plugin installed yet. Add one from{" "}
-              <span className="font-mono text-xs">/admin/plugins</span>.
+              No callable tools are installed yet.
             </EmptyTitle>
+            <p className="max-w-md text-muted-foreground text-sm">
+              Add plugins from <span className="font-mono">/admin/plugins</span>
+              , then reopen this step to choose exactly which tools this
+              coworker may use.
+            </p>
           </EmptyHeader>
         </Empty>
       ) : (
@@ -1002,34 +1335,97 @@ function ToolsStep({
 }
 
 function RoutineStep({
-  value,
-  onChange,
+  task,
+  onTaskChange,
+  schedule,
+  onScheduleChange,
+  customCron,
+  onCustomCronChange,
+  timezone,
+  onTimezoneChange,
 }: {
-  value: string;
-  onChange: (value: string) => void;
+  task: string;
+  onTaskChange: (value: string) => void;
+  schedule: ScheduleValue;
+  onScheduleChange: (value: ScheduleValue) => void;
+  customCron: string;
+  onCustomCronChange: (value: string) => void;
+  timezone: string;
+  onTimezoneChange: (value: string) => void;
 }) {
   return (
     <StepItem name="routine">
-      <QuestionnaireTitle>Should it check in on a schedule?</QuestionnaireTitle>
+      <QuestionnaireTitle>Should it run on a schedule?</QuestionnaireTitle>
       <QuestionnaireDescription>
-        Optional, and set up the way every routine is: in a conversation. Say
-        what to do and how often, in plain language, and Finish opens a
-        channel with this coworker to set it up before you see anything else.
+        Optional. Fill the task and frequency here; Finish opens a channel with
+        this coworker so it can create the routine visibly.
       </QuestionnaireDescription>
-      <FieldGroup>
+      <FieldGroup className="grid gap-4">
         <Field>
+          <FieldLabel htmlFor="create-agent-routine-task">
+            Task to do
+          </FieldLabel>
           <Textarea
-            aria-label="Routine instruction"
-            onChange={(event) => onChange(event.target.value)}
-            placeholder="Every weekday morning at 9, check for pending expense reports older than 3 days and post a summary here."
+            id="create-agent-routine-task"
+            onChange={(event) => onTaskChange(event.target.value)}
+            placeholder="Check for pending expense reports older than 3 days and post a summary."
             rows={4}
-            value={value}
+            value={task}
           />
           <FieldDescription>
             Leave this blank to skip — you can always ask for a routine later,
             in any channel with this coworker.
           </FieldDescription>
         </Field>
+        <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_180px]">
+          <Field>
+            <FieldLabel>Frequency</FieldLabel>
+            <Select
+              onValueChange={(value) =>
+                onScheduleChange(value as ScheduleValue)
+              }
+              value={schedule}
+            >
+              <SelectTrigger className="w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent align="start">
+                {scheduleOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field>
+            <FieldLabel htmlFor="create-agent-routine-timezone">
+              Timezone
+            </FieldLabel>
+            <Input
+              id="create-agent-routine-timezone"
+              onChange={(event) => onTimezoneChange(event.target.value)}
+              value={timezone}
+            />
+          </Field>
+        </div>
+        {schedule === "custom" ? (
+          <Field>
+            <FieldLabel htmlFor="create-agent-routine-cron">
+              Custom cron
+            </FieldLabel>
+            <Input
+              id="create-agent-routine-cron"
+              onChange={(event) => onCustomCronChange(event.target.value)}
+              placeholder="0 14 * * *"
+              value={customCron}
+            />
+            <FieldDescription>
+              Five-field cron. Example:{" "}
+              <span className="font-mono">0 14 * * *</span>.
+            </FieldDescription>
+          </Field>
+        ) : null}
       </FieldGroup>
     </StepItem>
   );

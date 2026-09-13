@@ -5,12 +5,20 @@ export type AgentActor = {
   role: "admin" | "user";
 };
 
+export type AgentModelConfig = {
+  provider: string;
+  name: string;
+};
+
 export type AgentProfile = {
   id: string;
   name: string;
   title: string;
   roleDescription: string;
+  description: string;
+  instructions: string;
   avatarSeed: string;
+  model: AgentModelConfig | null;
   visibility: AgentVisibility;
   ownerUserId: string | null;
   systemOwned: boolean;
@@ -31,7 +39,12 @@ export type AgentProfile = {
 
 export type CreateAgentInput = Pick<
   AgentProfile,
-  "name" | "title" | "roleDescription" | "visibility"
+  | "name"
+  | "title"
+  | "roleDescription"
+  | "description"
+  | "instructions"
+  | "visibility"
 > & {
   /**
    * The AG-UI endpoint this Bot runs on, or undefined for the one in the box.
@@ -55,4 +68,6 @@ export type CreateAgentInput = Pick<
    * new id, in `create` below.
    */
   avatarSeed?: string;
+  /** Model override for the runtime. Null clears it back to deployment default. */
+  model?: AgentModelConfig | null;
 };

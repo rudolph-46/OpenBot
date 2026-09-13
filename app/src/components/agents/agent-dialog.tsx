@@ -1,10 +1,12 @@
 import {
   IconAdjustments,
+  IconArrowUpRight,
   IconArrowsExchange,
   IconClock,
   IconPencil,
   IconPlugConnected,
   IconPuzzle,
+  IconRefresh,
   IconUser,
 } from "@tabler/icons-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -57,6 +59,7 @@ import {
   SidebarProvider,
 } from "@/components/ui/sidebar";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   type AgentFormValues,
@@ -69,8 +72,22 @@ import {
   setAgentHiddenMutationOptions,
   updateAgentMutationOptions,
 } from "@/lib/agents/mutations";
-import { type AgentProfile, agentQueryOptions } from "@/lib/agents/queries";
-import { agentPluginsQueryOptions } from "@/lib/plugins/queries";
+import {
+  type AgentModelConfig,
+  type AgentProfile,
+  agentQueryOptions,
+} from "@/lib/agents/queries";
+import {
+  addCuratedServerMutationOptions,
+  connectAccountMutationOptions,
+  setPluginGrantMutationOptions,
+} from "@/lib/plugins/mutations";
+import {
+  agentPluginsQueryOptions,
+  connectionsQueryOptions,
+  type PluginServer,
+  pluginsPageQueryOptions,
+} from "@/lib/plugins/queries";
 import { readToolName } from "@/lib/plugins/tool-name";
 
 /**
@@ -99,7 +116,9 @@ export function AgentDialog({
           max-h-[85svh] still caps it on a short display, where the main pane scrolls. */}
       <DialogContent className="overflow-hidden p-0 md:max-h-[680px] md:max-w-[700px] lg:max-w-[800px]">
         {/* Keyed by coworker so the section and edit state never carry over from another one. */}
-        {agentId ? <AgentDialogBody agentId={agentId} key={agentId} /> : null}
+        {agentId ? (
+          <AgentManagementPanel agentId={agentId} key={agentId} />
+        ) : null}
       </DialogContent>
     </Dialog>
   );
@@ -116,7 +135,13 @@ const SECTIONS = [
 
 type SectionId = (typeof SECTIONS)[number]["id"];
 
-function AgentDialogBody({ agentId }: { agentId: string }) {
+export function AgentManagementPanel({
+  agentId,
+  page = false,
+}: {
+  agentId: string;
+  page?: boolean;
+}) {
   const [section, setSection] = useState<SectionId>("general");
   const agent = useQuery(agentQueryOptions(agentId));
 
@@ -141,9 +166,17 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
 
   return (
     <>
-      <DialogTitle className="sr-only">{profile.name}</DialogTitle>
+      {page ? null : (
+        <DialogTitle className="sr-only">{profile.name}</DialogTitle>
+      )}
       {/* min-h-full overrides the provider's own min-h-svh, which is sized for a page. */}
-      <SidebarProvider className="min-h-full items-start">
+      <SidebarProvider
+        className={
+          page
+            ? "h-[calc(100svh-210px)] min-h-[520px] min-w-0 items-start"
+            : "min-h-full items-start"
+        }
+      >
         <Sidebar className="hidden md:flex" collapsible="none">
           {/* Who this dialog is about, said once here rather than repeated per section. */}
           <SidebarHeader className="flex-row items-center gap-3 p-4">
@@ -181,7 +214,13 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
             </SidebarGroup>
           </SidebarContent>
         </Sidebar>
-        <main className="flex h-[640px] max-h-[80svh] flex-1 flex-col overflow-hidden">
+        <main
+          className={
+            page
+              ? "flex min-h-0 flex-1 flex-col overflow-hidden"
+              : "flex h-[640px] max-h-[80svh] flex-1 flex-col overflow-hidden"
+          }
+        >
           {/*
            * The sidebar hides below md, and without this strip that left the sections unreachable
            * on a phone: the dialog opened on General and nothing could leave it. A scrollable row
@@ -221,7 +260,7 @@ function AgentDialogBody({ agentId }: { agentId: string }) {
             {section === "general" ? (
               <GeneralSection agentId={agentId} profile={profile} />
             ) : section === "access" ? (
-              <AccessSection agentId={agentId} />
+              <AccessSection agentId={agentId} profile={profile} />
             ) : section === "connection" ? (
               <ConnectionSection agentId={agentId} profile={profile} />
             ) : section === "handoff" ? (
@@ -256,15 +295,57 @@ function GeneralSection({
   const save = (patch: Partial<AgentFormValues>) =>
     updateAgent.mutateAsync({
       agentId,
-      input: agentInputFrom({
-        name: profile.name,
-        title: profile.title,
-        roleDescription: profile.roleDescription,
-        visibility: profile.visibility,
-        endpoint: profile.endpoint ?? "",
-        authValue: "",
-        ...patch,
-      }),
+      input: {
+        ...agentInputFrom({
+          name: profile.name,
+          title: profile.title,
+          roleDescription: profile.roleDescription,
+          description: profile.description || profile.roleDescription,
+          instructions: profile.instructions || profile.roleDescription,
+          visibility: profile.visibility,
+          endpoint: profile.endpoint ?? "",
+          authValue: "",
+          ...patch,
+        }),
+        avatarSeed: profile.avatarSeed,
+      },
+    });
+
+  const saveAvatar = () =>
+    updateAgent.mutateAsync({
+      agentId,
+      input: {
+        ...agentInputFrom({
+          name: profile.name,
+          title: profile.title,
+          roleDescription: profile.roleDescription,
+          description: profile.description || profile.roleDescription,
+          instructions: profile.instructions || profile.roleDescription,
+          visibility: profile.visibility,
+          endpoint: profile.endpoint ?? "",
+          authValue: "",
+        }),
+        avatarSeed: `avatar-${globalThis.crypto?.randomUUID?.() ?? Date.now()}`,
+      },
+    });
+
+  const saveModel = (model: AgentModelConfig | null) =>
+    updateAgent.mutateAsync({
+      agentId,
+      input: {
+        ...agentInputFrom({
+          name: profile.name,
+          title: profile.title,
+          roleDescription: profile.roleDescription,
+          description: profile.description || profile.roleDescription,
+          instructions: profile.instructions || profile.roleDescription,
+          visibility: profile.visibility,
+          endpoint: profile.endpoint ?? "",
+          authValue: "",
+        }),
+        avatarSeed: profile.avatarSeed,
+        model,
+      },
     });
 
   return (
@@ -272,6 +353,17 @@ function GeneralSection({
       {/* Each stands on its own — muted, not bg-card, which is invisible against a popup — and
           each edits in place: the field somebody wants to change is the only one that opens. */}
       <div className="flex flex-col gap-2">
+        <AvatarItem
+          canManage={profile.canManage}
+          name={profile.name}
+          onSave={saveAvatar}
+          seed={profile.avatarSeed}
+        />
+        <ModelItem
+          canManage={profile.canManage}
+          model={profile.model}
+          onSave={saveModel}
+        />
         <EditableTextItem
           canManage={profile.canManage}
           label="Name"
@@ -288,11 +380,21 @@ function GeneralSection({
         />
         <EditableTextItem
           canManage={profile.canManage}
-          label="Role"
+          label="Description"
           multiline
-          onSave={(roleDescription) => save({ roleDescription })}
-          schema={agentFormSchema.shape.roleDescription}
-          value={profile.roleDescription}
+          onSave={(description) => save({ description })}
+          schema={agentFormSchema.shape.description}
+          value={profile.description || profile.roleDescription}
+        />
+        <EditableTextItem
+          canManage={profile.canManage}
+          label="Instructions"
+          multiline
+          onSave={(instructions) =>
+            save({ instructions, roleDescription: instructions })
+          }
+          schema={agentFormSchema.shape.instructions}
+          value={profile.instructions || profile.roleDescription}
         />
         <VisibilityItem
           canManage={profile.canManage}
@@ -333,6 +435,229 @@ function GeneralSection({
         </ItemActions>
       </Item>
     </>
+  );
+}
+
+function AvatarItem({
+  name,
+  seed,
+  canManage,
+  onSave,
+}: {
+  name: string;
+  seed: string;
+  canManage: boolean;
+  onSave: () => Promise<unknown>;
+}) {
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  return (
+    <Item variant="muted">
+      <ItemContent>
+        <ItemTitle>Photo</ItemTitle>
+        <ItemDescription>
+          Generated avatar shown in the roster and channels.
+        </ItemDescription>
+        {error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </ItemContent>
+      <ItemActions>
+        <AbstractAvatar name={name} seed={seed} size={40} />
+        {canManage ? (
+          <Button
+            disabled={saving}
+            onClick={async () => {
+              setError(null);
+              setSaving(true);
+              try {
+                await onSave();
+              } catch (failure) {
+                setError(
+                  failure instanceof Error
+                    ? failure.message
+                    : "Could not save.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+            size="sm"
+            variant="outline"
+          >
+            <IconRefresh />
+            {saving ? "Changing…" : "Change"}
+          </Button>
+        ) : null}
+      </ItemActions>
+    </Item>
+  );
+}
+
+const MODEL_PROVIDER_OPTIONS = [
+  { value: "openrouter", label: "OpenRouter" },
+  { value: "openai", label: "OpenAI" },
+  { value: "anthropic", label: "Anthropic" },
+  { value: "google_genai", label: "Google" },
+  { value: "deepseek", label: "DeepSeek" },
+  { value: "groq", label: "Groq" },
+  { value: "mistralai", label: "Mistral" },
+  { value: "xai", label: "xAI" },
+  { value: "together", label: "Together" },
+] as const;
+
+function modelProviderLabel(provider: string): string {
+  return (
+    MODEL_PROVIDER_OPTIONS.find((option) => option.value === provider)?.label ??
+    connectorName(provider)
+  );
+}
+
+function ModelItem({
+  model,
+  canManage,
+  onSave,
+}: {
+  model: AgentModelConfig | null;
+  canManage: boolean;
+  onSave: (model: AgentModelConfig | null) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [provider, setProvider] = useState(model?.provider ?? "default");
+  const [name, setName] = useState(model?.name ?? "");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const current = model
+    ? `${modelProviderLabel(model.provider)} · ${model.name}`
+    : "Deployment default";
+
+  const resetDraft = () => {
+    setProvider(model?.provider ?? "default");
+    setName(model?.name ?? "");
+    setError(null);
+  };
+
+  const submit = async () => {
+    const next =
+      provider === "default" ? null : { provider, name: name.trim() };
+    if (next && !next.name) {
+      setError("Enter a model name.");
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      await onSave(next);
+      setEditing(false);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "Could not save.");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  if (!editing) {
+    return (
+      <Item variant="muted">
+        <ItemContent>
+          <ItemTitle>Model</ItemTitle>
+          <ItemDescription>
+            Runtime model used by the managed LangGraph Bot.
+          </ItemDescription>
+        </ItemContent>
+        <ItemActions className="min-w-0">
+          <span className="truncate text-right text-sm text-muted-foreground">
+            {current}
+          </span>
+          {canManage ? (
+            <Button
+              aria-label="Edit model"
+              onClick={() => {
+                resetDraft();
+                setEditing(true);
+              }}
+              size="icon-sm"
+              variant="ghost"
+            >
+              <IconPencil />
+            </Button>
+          ) : null}
+        </ItemActions>
+      </Item>
+    );
+  }
+
+  return (
+    <Item variant="muted">
+      <ItemContent>
+        <ItemTitle>Model</ItemTitle>
+        <div className="grid gap-2 sm:grid-cols-[160px_1fr]">
+          <Select
+            items={{
+              default: "Default",
+              ...Object.fromEntries(
+                MODEL_PROVIDER_OPTIONS.map((option) => [
+                  option.value,
+                  option.label,
+                ]),
+              ),
+            }}
+            onValueChange={(next) => next && setProvider(next)}
+            value={provider}
+          >
+            <SelectTrigger>
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="default">Default</SelectItem>
+              {MODEL_PROVIDER_OPTIONS.map((option) => (
+                <SelectItem key={option.value} value={option.value}>
+                  {option.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Input
+            disabled={provider === "default"}
+            onChange={(event) => setName(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                void submit();
+              }
+            }}
+            placeholder={
+              provider === "openrouter" ? "openai/gpt-4o-mini" : "Model name"
+            }
+            value={provider === "default" ? "" : name}
+          />
+        </div>
+        {error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-1 flex gap-2">
+          <Button disabled={saving} onClick={() => void submit()} size="sm">
+            {saving ? "Saving…" : "Save"}
+          </Button>
+          <Button
+            disabled={saving}
+            onClick={() => {
+              resetDraft();
+              setEditing(false);
+            }}
+            size="sm"
+            variant="outline"
+          >
+            Cancel
+          </Button>
+        </div>
+      </ItemContent>
+    </Item>
   );
 }
 
@@ -542,17 +867,27 @@ function connectorName(key: string): string {
 }
 
 /**
- * What this coworker may reach when it works: its granted connectors, one row each, and its skills.
+ * What this coworker may reach when it works.
  *
- * Read from the same snapshot the runtime offers the Bot, so this shows what a run would actually
- * hold rather than a second opinion. Read-only on purpose — granting is an administrator's, made on
- * the Plugins screens, and a row of switches here would be a second place for the same decision.
+ * The Plugins screens still decide what is installed deployment-wide; this tab decides which of
+ * those installed tools and skills this one Bot may hold. Calls are still checked on the server.
  */
-function AccessSection({ agentId }: { agentId: string }) {
-  const plugins = useQuery(agentPluginsQueryOptions(agentId));
+function AccessSection({
+  agentId,
+  profile,
+}: {
+  agentId: string;
+  profile: AgentProfile;
+}) {
+  const queryClient = useQueryClient();
+  const page = useQuery(pluginsPageQueryOptions());
+  const runtime = useQuery(agentPluginsQueryOptions(agentId));
+  const setGrant = useMutation(setPluginGrantMutationOptions(queryClient));
+  const addCurated = useMutation(addCuratedServerMutationOptions(queryClient));
+  const [error, setError] = useState<string | null>(null);
 
-  if (plugins.isPending) return null;
-  if (plugins.error || !plugins.data) {
+  if (page.isPending || runtime.isPending) return null;
+  if (page.error || runtime.error || !page.data || !runtime.data) {
     return (
       <p className="text-sm text-destructive" role="alert">
         What this coworker may reach could not be loaded.
@@ -560,37 +895,29 @@ function AccessSection({ agentId }: { agentId: string }) {
     );
   }
 
-  /* One row per connector, carrying what a person recognises: the tools' names, not their count. */
-  const connectors = new Map<string, string[]>();
-  for (const tool of plugins.data.tools) {
-    const key = tool.ref.split("/")[0] ?? tool.ref;
-    let label = readToolName(tool.toolName).label;
-    /*
-     * Vendors prefix every tool with their own name — "Notion create pages" — which next to a row
-     * already titled Notion reads as a stutter. Stripped only as a leading word, and re-cased, so
-     * "Notion search" becomes "Search" while "Search notion pages" is left alone.
-     */
-    const prefix = `${key.toLowerCase()} `;
-    if (label.toLowerCase().startsWith(prefix)) {
-      const rest = label.slice(prefix.length);
-      label = rest ? rest[0]?.toUpperCase() + rest.slice(1) : label;
-    }
-    const labels = connectors.get(key) ?? [];
-    labels.push(label);
-    connectors.set(key, labels);
-  }
-  const skills = plugins.data.skills;
+  const servers = page.data.servers.filter(
+    (server) => server.tools.length > 0 || server.withdrawn.length > 0,
+  );
+  const hasRoutines = page.data.servers.some(
+    (server) => server.id === "routines",
+  );
+  const routinesCatalogue = page.data.catalogue.find(
+    (entry) => entry.key === "routines",
+  );
+  const grantedRuntimeRefs = new Set(
+    runtime.data.tools.map((tool) => tool.ref),
+  );
 
-  if (connectors.size === 0 && skills.length === 0) {
+  if (servers.length === 0 && page.data.skills.length === 0) {
     return (
       <Empty className="h-[180px] border border-dashed">
         <EmptyHeader>
           <EmptyTitle className="text-muted-foreground">
-            Nothing granted yet
+            Nothing available yet
           </EmptyTitle>
           <EmptyDescription>
-            An administrator grants connectors and skills from the Plugins
-            screens. Until then this coworker can converse, and nothing more.
+            Add plugins or skills first, then grant the tools this coworker
+            should be allowed to use.
           </EmptyDescription>
         </EmptyHeader>
       </Empty>
@@ -600,39 +927,203 @@ function AccessSection({ agentId }: { agentId: string }) {
   return (
     <>
       <p className="text-sm text-muted-foreground">
-        What this coworker may reach when it works. Granted by an administrator
-        on the Plugins screens; anything not listed is refused when called.
+        Choose the installed tools and skills this coworker can use. A tool
+        still needs your connected account when the vendor asks for OAuth.
       </p>
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
       <div className="flex flex-col gap-2">
-        {[...connectors.entries()].map(([key, labels]) => (
-          <Item key={key} variant="muted">
+        {!hasRoutines && routinesCatalogue ? (
+          <Item variant="muted">
             <ItemContent>
-              <ItemTitle>{connectorName(key)}</ItemTitle>
+              <ItemTitle>{routinesCatalogue.title}</ItemTitle>
               <ItemDescription>
-                {labels.slice(0, 4).join(", ")}
-                {labels.length > 4 ? ` and ${labels.length - 4} more` : ""}
+                Add the built-in scheduling tools so this coworker can create,
+                list, update and delete routines.
               </ItemDescription>
             </ItemContent>
             <ItemActions>
-              <span className="text-sm text-muted-foreground tabular-nums">
-                {labels.length} {labels.length === 1 ? "tool" : "tools"}
-              </span>
+              <Button
+                disabled={!profile.canManage || addCurated.isPending}
+                onClick={() => {
+                  setError(null);
+                  addCurated.mutate(
+                    { key: "routines" },
+                    {
+                      onError: (failure) =>
+                        setError(
+                          failure instanceof Error
+                            ? failure.message
+                            : "Routines could not be added.",
+                        ),
+                    },
+                  );
+                }}
+                size="sm"
+                type="button"
+                variant="outline"
+              >
+                {addCurated.isPending ? "Adding…" : "Add Routines"}
+              </Button>
             </ItemActions>
           </Item>
+        ) : null}
+        {servers.map((server) => (
+          <PluginServerAccess
+            agentId={agentId}
+            canManage={profile.canManage}
+            grantedRuntimeRefs={grantedRuntimeRefs}
+            key={server.id}
+            onError={setError}
+            server={server}
+            setGrant={setGrant}
+          />
         ))}
-        {skills.map((skill) => (
+        {page.data.skills.map((skill) => (
           <Item key={skill.slug} variant="muted">
             <ItemContent>
               <ItemTitle>{skill.title}</ItemTitle>
               <ItemDescription>{skill.summary}</ItemDescription>
             </ItemContent>
             <ItemActions>
-              <span className="text-sm text-muted-foreground">Skill</span>
+              <Switch
+                aria-label={`Let ${profile.name} use ${skill.title}`}
+                checked={skill.grantedTo.includes(agentId)}
+                disabled={
+                  !profile.canManage ||
+                  (setGrant.isPending &&
+                    setGrant.variables?.kind === "skill" &&
+                    setGrant.variables.ref === skill.slug)
+                }
+                onCheckedChange={(next) => {
+                  setError(null);
+                  setGrant.mutate(
+                    {
+                      agentId,
+                      granted: next,
+                      kind: "skill",
+                      ref: skill.slug,
+                    },
+                    {
+                      onError: (failure) =>
+                        setError(
+                          failure instanceof Error
+                            ? failure.message
+                            : "That skill could not be changed.",
+                        ),
+                    },
+                  );
+                }}
+              />
             </ItemActions>
           </Item>
         ))}
       </div>
     </>
+  );
+}
+
+function PluginServerAccess({
+  agentId,
+  server,
+  canManage,
+  grantedRuntimeRefs,
+  setGrant,
+  onError,
+}: {
+  agentId: string;
+  server: PluginServer;
+  canManage: boolean;
+  grantedRuntimeRefs: Set<string>;
+  setGrant: ReturnType<
+    typeof useMutation<
+      unknown,
+      Error,
+      {
+        kind: "mcp" | "skill";
+        ref: string;
+        agentId: string;
+        granted: boolean;
+      }
+    >
+  >;
+  onError: (message: string | null) => void;
+}) {
+  return (
+    <section className="grid gap-2">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h3 className="truncate text-sm font-medium">{server.title}</h3>
+          <p className="truncate text-xs text-muted-foreground">
+            {server.summary}
+          </p>
+        </div>
+        <span className="text-xs text-muted-foreground tabular-nums">
+          {
+            server.tools.filter((tool) => tool.grantedTo.includes(agentId))
+              .length
+          }
+          /{server.tools.length}
+        </span>
+      </div>
+      <div className="flex flex-col gap-2">
+        {server.tools.map((tool) => {
+          const toolName = readToolName(tool.name).label;
+          const granted = tool.grantedTo.includes(agentId);
+          const offered = grantedRuntimeRefs.has(tool.ref);
+          return (
+            <Item key={tool.ref} variant="muted">
+              <ItemContent>
+                <ItemTitle>{toolName}</ItemTitle>
+                <ItemDescription>
+                  {tool.description || `${connectorName(server.id)} tool.`}
+                  {granted && !offered
+                    ? " Granted, but not currently offered by the runtime."
+                    : ""}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                <span className="text-xs text-muted-foreground">
+                  {tool.effect === "read" ? "Read" : "Write"}
+                </span>
+                <Switch
+                  aria-label={`Let this coworker call ${toolName}`}
+                  checked={granted}
+                  disabled={
+                    !canManage ||
+                    (setGrant.isPending &&
+                      setGrant.variables?.kind === "mcp" &&
+                      setGrant.variables.ref === tool.ref)
+                  }
+                  onCheckedChange={(next) => {
+                    onError(null);
+                    setGrant.mutate(
+                      {
+                        agentId,
+                        granted: next,
+                        kind: "mcp",
+                        ref: tool.ref,
+                      },
+                      {
+                        onError: (failure) =>
+                          onError(
+                            failure instanceof Error
+                              ? failure.message
+                              : "That tool could not be changed.",
+                          ),
+                      },
+                    );
+                  }}
+                />
+              </ItemActions>
+            </Item>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 
@@ -643,6 +1134,27 @@ function ConnectionSection({
   agentId: string;
   profile: AgentProfile;
 }) {
+  const queryClient = useQueryClient();
+  const updateAgent = useMutation(updateAgentMutationOptions(queryClient));
+  const saveConnection = (patch: Partial<AgentFormValues>) =>
+    updateAgent.mutateAsync({
+      agentId,
+      input: {
+        ...agentInputFrom({
+          name: profile.name,
+          title: profile.title,
+          roleDescription: profile.roleDescription,
+          description: profile.description || profile.roleDescription,
+          instructions: profile.instructions || profile.roleDescription,
+          visibility: profile.visibility,
+          endpoint: profile.endpoint ?? "",
+          authValue: "",
+          ...patch,
+        }),
+        avatarSeed: profile.avatarSeed,
+      },
+    });
+
   /*
    * A built-in coworker is done the moment it exists: it runs on the deployment's own Bot, whose
    * process already holds the deployment's tool credential, so its tool calls authenticate with no
@@ -651,28 +1163,269 @@ function ConnectionSection({
    */
   if (!profile.endpoint || profile.builtIn) {
     return (
-      <p className="text-sm text-muted-foreground">
-        Runs on this deployment's own Bot. Nothing to connect and nothing to
-        authenticate: its tool calls are covered by the deployment's own
-        credential.
-      </p>
+      <>
+        <Item variant="muted">
+          <ItemContent>
+            <ItemTitle>Runtime</ItemTitle>
+            <ItemDescription>
+              Runs on this deployment's own Bot. Its tool calls are covered by
+              the deployment credential.
+            </ItemDescription>
+          </ItemContent>
+        </Item>
+        <ConnectedAccounts />
+      </>
     );
   }
   return (
     <>
-      <section className="grid gap-2">
-        <h2 className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-          Endpoint
-        </h2>
-        <p className="break-all font-mono text-sm">{profile.endpoint}</p>
-      </section>
+      <div className="flex flex-col gap-2">
+        <EditableTextItem
+          canManage={profile.canManage}
+          label="Endpoint"
+          onSave={(endpoint) => saveConnection({ endpoint })}
+          schema={agentFormSchema.shape.endpoint}
+          value={profile.endpoint}
+        />
+        <AuthKeyItem
+          canManage={profile.canManage}
+          hasAuth={profile.hasAuth}
+          onSave={(authValue) => saveConnection({ authValue })}
+        />
+      </div>
       {profile.canManage ? (
         <CallbackTokenPanel
           agentId={agentId}
           hasToken={profile.hasCallbackToken}
         />
       ) : null}
+      <ConnectedAccounts />
     </>
+  );
+}
+
+function AuthKeyItem({
+  canManage,
+  hasAuth,
+  onSave,
+}: {
+  canManage: boolean;
+  hasAuth: boolean;
+  onSave: (authValue: string) => Promise<unknown>;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  if (!editing) {
+    return (
+      <Item variant="muted">
+        <ItemContent>
+          <ItemTitle>Authorization key</ItemTitle>
+          <ItemDescription>
+            {hasAuth
+              ? "A key is configured. Paste a new one to replace it."
+              : "No key configured for this endpoint."}
+          </ItemDescription>
+        </ItemContent>
+        <ItemActions>
+          <span className="text-sm text-muted-foreground">
+            {hasAuth ? "Configured" : "None"}
+          </span>
+          {canManage ? (
+            <Button
+              aria-label="Edit authorization key"
+              onClick={() => {
+                setDraft("");
+                setError(null);
+                setEditing(true);
+              }}
+              size="icon-sm"
+              variant="ghost"
+            >
+              <IconPencil />
+            </Button>
+          ) : null}
+        </ItemActions>
+      </Item>
+    );
+  }
+
+  return (
+    <Item variant="muted">
+      <ItemContent>
+        <ItemTitle>Authorization key</ItemTitle>
+        <Input
+          autoFocus
+          onChange={(event) => setDraft(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              void (async () => {
+                if (!draft.trim()) return;
+                setSaving(true);
+                setError(null);
+                try {
+                  await onSave(draft);
+                  setEditing(false);
+                } catch (failure) {
+                  setError(
+                    failure instanceof Error
+                      ? failure.message
+                      : "Could not save.",
+                  );
+                } finally {
+                  setSaving(false);
+                }
+              })();
+            }
+          }}
+          placeholder="Bearer ..."
+          type="password"
+          value={draft}
+        />
+        {error ? (
+          <p className="text-sm text-destructive" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="mt-1 flex gap-2">
+          <Button
+            disabled={saving || !draft.trim()}
+            onClick={async () => {
+              setSaving(true);
+              setError(null);
+              try {
+                await onSave(draft);
+                setEditing(false);
+              } catch (failure) {
+                setError(
+                  failure instanceof Error
+                    ? failure.message
+                    : "Could not save.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+            size="sm"
+          >
+            {saving ? "Saving…" : "Save"}
+          </Button>
+          <Button
+            disabled={saving}
+            onClick={() => setEditing(false)}
+            size="sm"
+            variant="outline"
+          >
+            Cancel
+          </Button>
+        </div>
+      </ItemContent>
+    </Item>
+  );
+}
+
+function ConnectedAccounts() {
+  const page = useQuery(pluginsPageQueryOptions());
+  const connections = useQuery(connectionsQueryOptions());
+  const connect = useMutation({
+    ...connectAccountMutationOptions("admin"),
+    onSuccess: (authorizationUrl) => {
+      window.location.assign(authorizationUrl);
+    },
+  });
+  const [error, setError] = useState<string | null>(null);
+
+  if (page.isPending || connections.isPending) return null;
+  if (page.error || connections.error || !page.data || !connections.data) {
+    return (
+      <p className="text-sm text-destructive" role="alert">
+        Connected accounts could not be loaded.
+      </p>
+    );
+  }
+
+  const authByKey = new Map(
+    page.data.catalogue.map((entry) => [entry.key, entry.auth] as const),
+  );
+  const oauthServers = page.data.servers.filter(
+    (server) => authByKey.get(server.id) === "user-oauth",
+  );
+  const connected = new Set(
+    connections.data.connections.map((connection) => connection.serverId),
+  );
+
+  if (oauthServers.length === 0) return null;
+
+  return (
+    <section className="grid gap-2">
+      <div>
+        <h3 className="text-sm font-medium">Your connected accounts</h3>
+        <p className="text-xs text-muted-foreground">
+          Used when this coworker calls granted tools as you.
+        </p>
+      </div>
+      {error ? (
+        <p className="text-sm text-destructive" role="alert">
+          {error}
+        </p>
+      ) : null}
+      <div className="flex flex-col gap-2">
+        {oauthServers.map((server) => {
+          const isConnected = connected.has(server.id);
+          const canConnect = server.hasCredential || server.dynamicClient;
+          return (
+            <Item key={server.id} variant="muted">
+              <ItemContent>
+                <ItemTitle>{server.title}</ItemTitle>
+                <ItemDescription>
+                  {isConnected
+                    ? "Connected for your account."
+                    : canConnect
+                      ? "Connect your own account with the vendor."
+                      : "An administrator must finish OAuth setup first."}
+                </ItemDescription>
+              </ItemContent>
+              <ItemActions>
+                {isConnected ? (
+                  <>
+                    <span
+                      aria-hidden="true"
+                      className="size-1.5 rounded-full bg-emerald-500"
+                    />
+                    <span className="text-xs text-muted-foreground">
+                      Connected
+                    </span>
+                  </>
+                ) : (
+                  <Button
+                    disabled={!canConnect || connect.isPending}
+                    onClick={() => {
+                      setError(null);
+                      connect.mutate(server.id, {
+                        onError: (failure) =>
+                          setError(
+                            failure instanceof Error
+                              ? failure.message
+                              : "That account could not be connected.",
+                          ),
+                      });
+                    }}
+                    size="sm"
+                    variant="outline"
+                  >
+                    Connect
+                    <IconArrowUpRight />
+                  </Button>
+                )}
+              </ItemActions>
+            </Item>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

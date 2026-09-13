@@ -2,6 +2,7 @@ import { mutationOptions, type QueryClient } from "@tanstack/react-query";
 import { client } from "@/lib/client";
 import {
   type AgentProfile,
+  type AgentModelConfig,
   type AgentVisibility,
   agentApiPath,
   agentKeys,
@@ -11,17 +12,20 @@ export type AgentInput = {
   name: string;
   title: string;
   roleDescription: string;
+  description?: string;
+  instructions?: string;
   visibility: AgentVisibility;
   /** Where this coworker runs. Empty means the Bot in the box. */
   endpoint?: string;
   /** Write-only auth value; omitted when the user leaves the key field empty. */
   auth?: { header: string; value: string };
   /**
-   * The seed its face is drawn from. Create-only: omitted, the server keeps generating one from
-   * the new id the way it always has, so nothing outside the creation wizard's own avatar step
-   * has to know this field exists.
+   * The seed its face is drawn from. Omitted, the server keeps the current generated face on edit
+   * or creates one from the new id on create.
    */
   avatarSeed?: string;
+  /** Runtime model override. Null clears it back to the deployment default. */
+  model?: AgentModelConfig | null;
 };
 
 /** The sentence for every write here, since they all fail the same way to a reader. */

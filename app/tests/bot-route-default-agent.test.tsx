@@ -31,6 +31,7 @@ function agent(
 ): AgentProfile {
   return {
     avatarSeed: "seed",
+    model: null,
     builtIn: true,
     canManage: true,
     endpoint: null,

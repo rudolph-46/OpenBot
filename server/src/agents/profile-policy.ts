@@ -17,7 +17,8 @@ export function canManageAgent(
   actor: AgentActor,
   agent: AgentProfile,
 ): boolean {
-  if (agent.systemOwned || agent.deletedAt !== null) return false;
+  if (agent.deletedAt !== null) return false;
+  if (agent.systemOwned) return actor.role === "admin";
 
   return agent.ownerUserId === actor.id || actor.role === "admin";
 }

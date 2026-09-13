@@ -24,6 +24,8 @@ describe("coworker form validation", () => {
         name: "  Expense Manager  ",
         title: "Finance Operations",
         roleDescription: "Review receipts and prepare reimbursement reports.",
+        description: "Review receipts and prepare reimbursement reports.",
+        instructions: "Review receipts and prepare reimbursement reports.",
         visibility: "private",
         endpoint: "",
         authValue: "",
@@ -36,6 +38,8 @@ describe("coworker form validation", () => {
       name: "Expense Manager",
       title: "Finance Operations",
       roleDescription: "Review receipts.",
+      description: "Review receipts.",
+      instructions: "Review receipts.",
       visibility: "private" as const,
       authValue: "",
     };
@@ -61,6 +65,8 @@ describe("coworker form validation", () => {
       name: "Expense Manager",
       title: "Finance Operations",
       roleDescription: "Review receipts.",
+      description: "Review receipts.",
+      instructions: "Review receipts.",
       visibility: "private" as const,
       endpoint: "",
       authValue: "",
@@ -79,6 +85,12 @@ describe("coworker form validation", () => {
       agentFormSchema.safeParse({
         ...valid,
         roleDescription: "r".repeat(1001),
+      }).success,
+    ).toBe(false);
+    expect(
+      agentFormSchema.safeParse({
+        ...valid,
+        instructions: "r".repeat(4001),
       }).success,
     ).toBe(false);
     expect(

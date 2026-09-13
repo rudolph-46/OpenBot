@@ -20,6 +20,16 @@ export const agentFormSchema = z.object({
     .trim()
     .min(1, "Role description is required.")
     .max(1000, "Role description must be 1000 characters or fewer."),
+  description: z
+    .string()
+    .trim()
+    .min(1, "Description is required.")
+    .max(1000, "Description must be 1000 characters or fewer."),
+  instructions: z
+    .string()
+    .trim()
+    .min(1, "Instructions are required.")
+    .max(4000, "Instructions must be 4000 characters or fewer."),
   visibility: z.enum(["public", "private"]),
   /**
    * The AG-UI endpoint this coworker runs on. Empty means the Bot in the box.
@@ -46,6 +56,8 @@ export const emptyAgentForm: AgentFormValues = {
   name: "",
   title: "",
   roleDescription: "",
+  description: "",
+  instructions: "",
   visibility: "private",
   endpoint: "",
   authValue: "",
@@ -56,7 +68,9 @@ export function agentInputFrom(values: AgentFormValues) {
   return {
     name: values.name,
     title: values.title,
-    roleDescription: values.roleDescription,
+    roleDescription: values.instructions || values.roleDescription,
+    description: values.description || values.roleDescription,
+    instructions: values.instructions || values.roleDescription,
     visibility: values.visibility,
     endpoint: values.endpoint,
     ...(values.authValue.trim()

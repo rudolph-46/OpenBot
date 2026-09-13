@@ -27,10 +27,13 @@ type AgentInputObject = {
   name?: unknown;
   title?: unknown;
   roleDescription?: unknown;
+  description?: unknown;
+  instructions?: unknown;
   visibility?: unknown;
   endpoint?: unknown;
   auth?: unknown;
   avatarSeed?: unknown;
+  model?: unknown;
 };
 
 /**
@@ -64,12 +67,40 @@ export function parseAgentInput(
   );
   if (typeof title !== "string") return title;
 
+  if ("roleDescription" in input && typeof input.roleDescription !== "string") {
+    return {
+      ok: false,
+      error: "Role description must be text between 1 and 1000 characters.",
+    };
+  }
+  const legacyRoleDescription =
+    input.roleDescription ?? input.description ?? input.instructions;
   const roleDescription = boundedText(
-    input.roleDescription,
+    legacyRoleDescription,
     1000,
     "Role description must be text between 1 and 1000 characters.",
   );
   if (typeof roleDescription !== "string") return roleDescription;
+
+  const description =
+    input.description === undefined
+      ? roleDescription
+      : boundedText(
+          input.description,
+          1000,
+          "Description must be text between 1 and 1000 characters.",
+        );
+  if (typeof description !== "string") return description;
+
+  const instructions =
+    input.instructions === undefined
+      ? roleDescription
+      : boundedText(
+          input.instructions,
+          4000,
+          "Instructions must be text between 1 and 4000 characters.",
+        );
+  if (typeof instructions !== "string") return instructions;
 
   if (typeof input.visibility !== "string") {
     return { ok: false, error: "Visibility must be public or private." };
@@ -128,18 +159,69 @@ export function parseAgentInput(
     avatarSeed = input.avatarSeed.trim().slice(0, 200);
   }
 
+  const model = parseModelOverride(input);
+  if (!model.ok) return { ok: false, error: model.error };
+
   return {
     ok: true,
     value: {
       name,
       title,
-      roleDescription,
+      roleDescription: instructions,
+      description,
+      instructions,
       visibility,
-      endpoint,
-      auth,
-      avatarSeed,
+      ...(endpoint ? { endpoint } : {}),
+      ...(auth ? { auth } : {}),
+      ...(avatarSeed ? { avatarSeed } : {}),
+      ...(input.model !== undefined ? { model: model.value } : {}),
     },
   };
+}
+
+const MODEL_PROVIDERS = new Set([
+  "openrouter",
+  "openai",
+  "anthropic",
+  "google_genai",
+  "google",
+  "deepseek",
+  "groq",
+  "mistralai",
+  "xai",
+  "together",
+]);
+
+function parseModelOverride(
+  input: AgentInputObject,
+):
+  | { ok: true; value: CreateAgentInput["model"] }
+  | { ok: false; error: string } {
+  if (input.model === undefined) return { ok: true, value: undefined };
+  if (input.model === null) return { ok: true, value: null };
+  if (
+    !input.model ||
+    typeof input.model !== "object" ||
+    Array.isArray(input.model)
+  ) {
+    return { ok: false, error: "Model must be a provider and model name." };
+  }
+  const supplied = input.model as { provider?: unknown; name?: unknown };
+  const provider =
+    typeof supplied.provider === "string"
+      ? supplied.provider.trim().toLowerCase()
+      : "";
+  if (!MODEL_PROVIDERS.has(provider)) {
+    return { ok: false, error: "Model provider is not supported." };
+  }
+  const name = typeof supplied.name === "string" ? supplied.name.trim() : "";
+  if (name.length < 1 || name.length > 200) {
+    return {
+      ok: false,
+      error: "Model name must be text between 1 and 200 characters.",
+    };
+  }
+  return { ok: true, value: { provider, name } };
 }
 
 function isAgentInputObject(input: unknown): input is AgentInputObject {
@@ -724,7 +806,10 @@ function agentDto(actor: AgentActor, agent: AgentProfile) {
     name: agent.name,
     title: agent.title,
     roleDescription: agent.roleDescription,
+    description: agent.description,
+    instructions: agent.instructions,
     avatarSeed: agent.avatarSeed,
+    model: agent.model,
     visibility: agent.visibility,
     hidden: agent.hidden,
     systemOwned: agent.systemOwned,

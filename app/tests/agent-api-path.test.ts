@@ -33,6 +33,8 @@ const input = {
   name: "Synthetic",
   title: "Public test",
   roleDescription: "Preserve request body",
+  description: "Preserve request body",
+  instructions: "Preserve request body",
   visibility: "private" as const,
 };
 
@@ -44,6 +46,7 @@ function boundary(id: string, refusal?: "unauthenticated" | "forbidden") {
     ...input,
     id,
     avatarSeed: id,
+    model: null,
     ownerUserId: actor.id,
     systemOwned: false,
     hidden: false,

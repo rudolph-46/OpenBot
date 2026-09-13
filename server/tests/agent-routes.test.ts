@@ -28,6 +28,10 @@ const validInput: CreateAgentInput = {
   title: "Finance Operations",
   roleDescription:
     "Review receipts, categorize expenses, and prepare reimbursement reports.",
+  description:
+    "Review receipts, categorize expenses, and prepare reimbursement reports.",
+  instructions:
+    "Review receipts, categorize expenses, and prepare reimbursement reports.",
   visibility: "private",
 };
 
@@ -38,6 +42,7 @@ function profile(overrides: Partial<AgentProfile> = {}): AgentProfile {
     title: validInput.title,
     roleDescription: validInput.roleDescription,
     avatarSeed: "expense-manager",
+    model: null,
     visibility: validInput.visibility,
     ownerUserId: actor.id,
     systemOwned: false,
@@ -176,10 +181,14 @@ describe("agent input parser", () => {
     ["visibility", " private ", "private"],
   ])("accepts and trims boundary %s values", (field, value, trimmed) => {
     const result = parseAgentInput({ ...validInput, [field]: value });
+    const expected = { ...validInput, [field]: trimmed };
+    if (field === "roleDescription") {
+      expected.roleDescription = validInput.instructions;
+    }
 
     expect(result).toEqual({
       ok: true,
-      value: { ...validInput, [field]: trimmed },
+      value: expected,
     });
   });
 
@@ -192,11 +201,12 @@ describe("agent input parser", () => {
         visibility: " private ",
         id: "forged-agent",
         ownerUserId: "attacker",
-        avatarSeed: "forged-avatar",
+        avatarSeed: "updated-avatar",
         deletedAt: "now",
         systemOwned: true,
-        // `endpoint` is a real field for BYO-agent; validation protects it rather than refusing it
-        // as a forged field. See agent-endpoint.test.ts.
+        model: { provider: "openrouter", name: "openai/gpt-4o-mini" },
+        // These are real editable fields; validation protects them rather than refusing them as
+        // forged fields. See agent-endpoint.test.ts.
         endpoint: "https://agents.example.com/ag-ui",
       }),
     ).toEqual({
@@ -205,8 +215,12 @@ describe("agent input parser", () => {
         name: "Expense Manager",
         title: "Finance Operations",
         roleDescription: "Reviews receipts.",
+        description: "Reviews receipts.",
+        instructions: "Reviews receipts.",
         visibility: "private",
         endpoint: "https://agents.example.com/ag-ui",
+        avatarSeed: "updated-avatar",
+        model: { provider: "openrouter", name: "openai/gpt-4o-mini" },
       },
     });
   });
@@ -352,6 +366,7 @@ describe("agent lifecycle routes", () => {
           title: validInput.title,
           roleDescription: validInput.roleDescription,
           avatarSeed: "expense-manager",
+          model: null,
           visibility: "private",
           hidden: false,
           systemOwned: false,
@@ -365,6 +380,7 @@ describe("agent lifecycle routes", () => {
           title: validInput.title,
           roleDescription: validInput.roleDescription,
           avatarSeed: "expense-manager",
+          model: null,
           visibility: "private",
           hidden: false,
           systemOwned: false,
@@ -378,6 +394,7 @@ describe("agent lifecycle routes", () => {
           title: validInput.title,
           roleDescription: validInput.roleDescription,
           avatarSeed: "expense-manager",
+          model: null,
           visibility: "public",
           hidden: false,
           systemOwned: true,
@@ -422,7 +439,7 @@ describe("agent lifecycle routes", () => {
     ]);
   });
 
-  test("never forwards forged create or update fields", async () => {
+  test("forwards editable fields and ignores fields a caller must not set", async () => {
     const store = fakeStore();
     const app = appFor(store);
     const body = {
@@ -432,10 +449,11 @@ describe("agent lifecycle routes", () => {
       visibility: " private ",
       id: "forged-agent",
       ownerUserId: "attacker",
-      avatarSeed: "forged-avatar",
+      avatarSeed: "updated-avatar",
+      model: { provider: "openrouter", name: "openai/gpt-4o-mini" },
       deletedAt: "now",
       systemOwned: true,
-      // A real field now, not a forged one; the rest of this list still is.
+      // Real editable fields now, not forged ones; the rest of this list still is.
       endpoint: "https://agents.example.com/ag-ui",
     };
 
@@ -455,6 +473,8 @@ describe("agent lifecycle routes", () => {
     const expected = {
       ...validInput,
       endpoint: "https://agents.example.com/ag-ui",
+      avatarSeed: "updated-avatar",
+      model: { provider: "openrouter", name: "openai/gpt-4o-mini" },
     };
     expect(store.calls).toEqual([
       ["create", actor, expected],

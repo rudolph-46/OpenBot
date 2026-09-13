@@ -1,8 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useNavigate } from "@tanstack/react-router";
-import { type ReactNode, useState } from "react";
+import { type ReactNode } from "react";
 import { AbstractAvatar } from "@/components/agents/abstract-avatar";
-import { AgentDialog } from "@/components/agents/agent-dialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { agentQueryOptions } from "@/lib/agents/queries";
@@ -48,8 +47,6 @@ function ProfileSkeleton() {
  * two places to maintain and a sidebar that scrolled past the conversation it sat beside.
  */
 export function AgentProfile({ agentId }: { agentId: string }) {
-  /** The full dialog, opened over the chat rather than navigating away from it. */
-  const [managing, setManaging] = useState(false);
   const navigate = useNavigate();
   const agent = useQuery(agentQueryOptions(agentId));
 
@@ -94,7 +91,7 @@ export function AgentProfile({ agentId }: { agentId: string }) {
           Role
         </h2>
         <p className="text-sm whitespace-pre-wrap text-pretty">
-          {profile.roleDescription}
+          {profile.description || profile.roleDescription}
         </p>
       </section>
 
@@ -109,18 +106,14 @@ export function AgentProfile({ agentId }: { agentId: string }) {
         </Button>
         <Button
           className="w-full text-sm!"
-          onClick={() => setManaging(true)}
+          onClick={() =>
+            void navigate({ search: { agent: agentId }, to: "/agents" })
+          }
           variant="outline"
         >
-          Manage coworker
+          Edit coworker
         </Button>
       </div>
-
-      <AgentDialog
-        agentId={agentId}
-        onClose={() => setManaging(false)}
-        open={managing}
-      />
     </div>
   );
 }

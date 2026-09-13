@@ -112,6 +112,7 @@ function selectActiveAgents(database: Database, actor: AgentActor) {
       configuration: agents.configuration,
       title: agentProfiles.title,
       roleDescription: agentProfiles.roleDescription,
+      instructions: agentProfiles.instructions,
     })
     .from(agents)
     .innerJoin(agentProfiles, eq(agentProfiles.agentId, agents.id))

@@ -126,6 +126,8 @@ const joinedProjection = {
   name: agents.name,
   title: agentProfiles.title,
   roleDescription: agentProfiles.roleDescription,
+  description: agentProfiles.description,
+  instructions: agentProfiles.instructions,
   avatarSeed: agentProfiles.avatarSeed,
   visibility: agentProfiles.visibility,
   ownerUserId: agentProfiles.ownerUserId,
@@ -171,7 +173,10 @@ function mapProfile(
     name: row.name,
     title: row.title,
     roleDescription: row.roleDescription,
+    description: row.description ?? row.roleDescription,
+    instructions: row.instructions ?? row.roleDescription,
     avatarSeed: row.avatarSeed,
+    model: modelOf(row.configuration),
     visibility: row.visibility,
     ownerUserId: row.ownerUserId,
     systemOwned: row.packageId !== null,
@@ -197,6 +202,26 @@ function endpointOf(configuration: unknown): string | null {
   if (!configuration || typeof configuration !== "object") return null;
   const endpoint = (configuration as { endpoint?: unknown }).endpoint;
   return typeof endpoint === "string" ? endpoint : null;
+}
+
+function modelOf(configuration: unknown) {
+  if (!configuration || typeof configuration !== "object") return null;
+  const model = (configuration as { model?: unknown }).model;
+  if (!model || typeof model !== "object" || Array.isArray(model)) return null;
+  const provider = (model as { provider?: unknown }).provider;
+  const name = (model as { name?: unknown }).name;
+  return typeof provider === "string" && typeof name === "string"
+    ? { provider, name }
+    : null;
+}
+
+function withModelConfiguration<T extends Record<string, unknown>>(
+  configuration: T,
+  input: CreateAgentInput,
+) {
+  if (input.model === undefined) return configuration;
+  const { model: _model, ...withoutModel } = configuration;
+  return input.model ? { ...withoutModel, model: input.model } : withoutModel;
 }
 
 /** Which agent on a Mastra server this Bot means, when the row names one. */
@@ -338,10 +363,14 @@ async function lockProfileReadRow(executor: DatabaseExecutor, id: string) {
 }
 
 function requireManageable(actor: AgentActor, profile: AgentProfile) {
-  if (profile.systemOwned) throw new ProtectedAgentError(profile.id);
   if (!canManageAgent(actor, profile)) {
     throw new AgentNotManageableError(profile.id);
   }
+}
+
+function requireDeletable(actor: AgentActor, profile: AgentProfile) {
+  if (profile.systemOwned) throw new ProtectedAgentError(profile.id);
+  requireManageable(actor, profile);
 }
 
 function newAgentId() {
@@ -420,6 +449,7 @@ export function createAgentProfileStore(
         const endpoint = input.endpoint
           ? { endpoint: input.endpoint }
           : managedConfiguration;
+        const modelConfiguration = input.model ? { model: input.model } : {};
         const systemPrompt = input.systemPrompt?.trim();
         if (endpoint) {
           await transaction.insert(agents).values({
@@ -434,6 +464,7 @@ export function createAgentProfileStore(
             // auth-header.ts for why a bearer token must not sit next to the endpoint.
             configuration: {
               ...endpoint,
+              ...modelConfiguration,
               ...(input.auth && vault
                 ? {
                     auth: await storeAgentAuth({
@@ -462,7 +493,7 @@ export function createAgentProfileStore(
             id,
             name: input.name,
             type: "built_in",
-            configuration: { systemPrompt },
+            configuration: { systemPrompt, ...modelConfiguration },
           });
         } else {
           /*
@@ -477,6 +508,8 @@ export function createAgentProfileStore(
           ownerUserId: actor.id,
           title: input.title,
           roleDescription: input.roleDescription,
+          description: input.description,
+          instructions: input.instructions,
           // A seed chosen in the wizard's avatar step, or the id, exactly as before this field
           // existed — the id was never load-bearing beyond being some string unique to this Bot.
           avatarSeed: input.avatarSeed?.trim() || id,
@@ -531,34 +564,37 @@ export function createAgentProfileStore(
            * Only for `built_in`, and that matters. A remote Bot has no `systemPrompt` and must not
            * acquire one — its instruction travels as the standing role message instead — and the
            * tenant package's Bots, whose `system_prompt` is deliberately not their
-           * `role_description`, cannot reach this code at all: `requireManageable` above throws
-           * `ProtectedAgentError` for anything the package owns.
+           * `role_description`, now can reach this code for administrators because default
+           * coworkers are meant to be configurable from this deployment.
            */
-          const configuration = {
-            ...previous,
-            ...(row?.type === "built_in"
-              ? { systemPrompt: input.roleDescription }
-              : {}),
-            ...(input.endpoint ? { endpoint: input.endpoint } : {}),
-            ...(input.auth && vault
-              ? {
-                  auth: await storeAgentAuth({
-                    store: vault.store,
-                    encryptionKey: vault.encryptionKey,
-                    agentId: id,
-                    header: input.auth.header,
-                    value: input.auth.value,
-                    // An agent that already has a live key is being edited, not
-                    // first-created, so the vault rotates rather than inserting
-                    // a second live row for the same agent id.
-                    previousCredentialId: authFromConfiguration(
-                      row?.configuration,
-                    )?.credentialId,
-                    executor: transaction,
-                  }),
-                }
-              : {}),
-          };
+          const configuration = withModelConfiguration(
+            {
+              ...previous,
+              ...(row?.type === "built_in"
+                ? { systemPrompt: input.roleDescription }
+                : {}),
+              ...(input.endpoint ? { endpoint: input.endpoint } : {}),
+              ...(input.auth && vault
+                ? {
+                    auth: await storeAgentAuth({
+                      store: vault.store,
+                      encryptionKey: vault.encryptionKey,
+                      agentId: id,
+                      header: input.auth.header,
+                      value: input.auth.value,
+                      // An agent that already has a live key is being edited, not
+                      // first-created, so the vault rotates rather than inserting
+                      // a second live row for the same agent id.
+                      previousCredentialId: authFromConfiguration(
+                        row?.configuration,
+                      )?.credentialId,
+                      executor: transaction,
+                    }),
+                  }
+                : {}),
+            },
+            input,
+          );
 
           /*
            * The key this one replaces is already retired, by the rotation above.
@@ -579,6 +615,9 @@ export function createAgentProfileStore(
             .set({
               title: input.title,
               roleDescription: input.roleDescription,
+              description: input.description,
+              instructions: input.instructions,
+              ...(input.avatarSeed ? { avatarSeed: input.avatarSeed } : {}),
               visibility: input.visibility,
               updatedAt,
             })
@@ -632,6 +671,8 @@ export function createAgentProfileStore(
           ownerUserId: actor.id,
           title: source.title,
           roleDescription: source.roleDescription,
+          description: source.description,
+          instructions: source.instructions,
           avatarSeed: source.avatarSeed,
           visibility: "private",
         });
@@ -671,7 +712,7 @@ export function createAgentProfileStore(
           await lockProfileMutationRows(transaction, id);
           const profile = await findAccessibleProfile(transaction, actor, id);
           if (!profile) throw new AgentNotFoundError(id);
-          requireManageable(actor, profile);
+          requireDeletable(actor, profile);
 
           const deletedAt = new Date();
           await transaction

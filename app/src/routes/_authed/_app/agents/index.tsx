@@ -1,21 +1,27 @@
-import { IconPlus } from "@tabler/icons-react";
+import {
+  IconArrowLeft,
+  IconChevronRight,
+  IconPlus,
+  IconSettings,
+} from "@tabler/icons-react";
 import { useQuery } from "@tanstack/react-query";
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { z } from "zod";
 import { AgentCard } from "@/components/agents/agent-card";
-import { AgentDialog } from "@/components/agents/agent-dialog";
+import { AgentManagementPanel } from "@/components/agents/agent-dialog";
 import { CreateAgentDialog } from "@/components/agents/create-agent-dialog";
 import { SidebarToggleBar } from "@/components/layout/sidebar-toggle";
 import { StaggerItem } from "@/components/layout/stagger";
 import { Button } from "@/components/ui/button";
 import { Empty, EmptyHeader, EmptyTitle } from "@/components/ui/empty";
 import { Skeleton } from "@/components/ui/skeleton";
-import { agentListQueryOptions, isSharedWithYou } from "@/lib/agents/queries";
+import {
+  type AgentProfile,
+  agentListQueryOptions,
+  agentQueryOptions,
+  isSharedWithYou,
+} from "@/lib/agents/queries";
 
-/**
- * Creating and inspecting a coworker are search-parameter states so the roster remains mounted and
- * Back closes the dialog.
- */
 const agentsSearchSchema = z.object({
   new: z.boolean().optional(),
   agent: z.string().optional(),
@@ -26,40 +32,60 @@ export const Route = createFileRoute("/_authed/_app/agents/")({
   component: AgentsScreen,
 });
 
-/*
- * The roster wraps on the width it actually has, not on the window's.
- *
- * A card is a fixed 144px, so four fixed columns overlap the moment the column they sit in is
- * narrower than the card. That is not a narrow-window case: opening the detail pane takes the width
- * out of this column at any window size, so the cards behind an open Bot overlapped each other on a
- * perfectly ordinary screen. `auto-fill` tracks the container instead, which is the thing that
- * actually changed.
- *
- * The tracks are the card's own width, not `minmax(144px,1fr)`. A `1fr` track stretches to share
- * the container while the card inside it stays 144px, and the difference reads as a gap: at prose
- * width that was three 190px columns holding 144px cards, so the 15px gutter looked like 61px.
- *
- * Both grids are block children of their section, and they have to be. `auto-fill` needs a definite
- * width to divide into tracks; a grid placed inside a `flex flex-row` is a flex item sized
- * shrink-to-fit, so `auto-fill` has nothing to fill and resolves to a single column. That is what
- * put "Your agents" in a one-card column while "Explore agents", whose grid was never wrapped,
- * flowed correctly three across on the very same page. Do not reintroduce a flex wrapper here to
- * position the roster.
- */
+function AgentGrid({
+  agents,
+  empty,
+  failed,
+  loading,
+  title,
+}: {
+  agents: AgentProfile[] | undefined;
+  empty: string;
+  failed: boolean;
+  loading: boolean;
+  title: string;
+}) {
+  return (
+    <section className="grid gap-4">
+      <h2 className="text-lg font-semibold">{title}</h2>
+      {loading ? (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          {Array.from({ length: 6 }).map((_, index) => (
+            <Skeleton className="h-[180px] rounded-lg" key={index} />
+          ))}
+        </div>
+      ) : agents?.length ? (
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-2 2xl:grid-cols-3">
+          {agents.map((agent, index) => (
+            <StaggerItem index={index} key={agent.id}>
+              <Link className="block" to="/agents" search={{ agent: agent.id }}>
+                <AgentCard agent={agent} />
+              </Link>
+            </StaggerItem>
+          ))}
+        </div>
+      ) : failed ? (
+        <Empty className="h-[180px] border border-dashed border-destructive">
+          <EmptyHeader>
+            <EmptyTitle className="text-destructive">
+              Agents couldn't be loaded.
+            </EmptyTitle>
+          </EmptyHeader>
+        </Empty>
+      ) : (
+        <Empty className="h-[180px] border border-dashed">
+          <EmptyHeader>
+            <EmptyTitle className="text-muted-foreground">{empty}</EmptyTitle>
+          </EmptyHeader>
+        </Empty>
+      )}
+    </section>
+  );
+}
+
 function AgentsScreen() {
   const { new: isCreating, agent: selectedAgentId } = Route.useSearch();
   const navigate = Route.useNavigate();
-  /*
-   * The two empty states below must not fire while the list is still arriving. `skills.tsx` learned
-   * this first: an empty state standing there saying somebody has created nothing is a claim the
-   * screen has not yet earned, and on a slow connection it is the first thing they read.
-   *
-   * `isPending` rather than `agents === undefined`, and the difference is the whole point on a
-   * screen whose job is to say when there is nothing. `data` is also undefined when the query
-   * FAILED, so deriving the flag from it holds the screen in its loading branch forever on an
-   * error — two headings over nothing, which is the exact shape this task exists to remove.
-   * `isPending` goes false either way, so a failure falls through to the empty state.
-   */
   const {
     data: agents,
     isPending: loading,
@@ -67,22 +93,21 @@ function AgentsScreen() {
   } = useQuery(agentListQueryOptions());
   const mine = agents?.filter((a) => a.mine);
   const explore = agents?.filter(isSharedWithYou);
-
-  // Creating wins if both are somehow set: it is the more recent intent.
-  const showCreate = isCreating === true;
-  const showProfile = !showCreate && selectedAgentId !== undefined;
   const close = () => navigate({ search: {} });
 
   return (
     <>
       <SidebarToggleBar />
-      <div className="max-w-2xl px-4 w-full mx-auto">
-        <div className="mt-12 w-full max-w-2xl">
-          <div className="flex flex-row w-full items-center justify-between">
-            <h2 className="font-bold text-lg">Your agents</h2>
+      {selectedAgentId && !isCreating ? (
+        <AgentEditPage agentId={selectedAgentId} />
+      ) : (
+        <main className="mx-auto flex w-full max-w-[1540px] flex-col gap-8 px-6 py-8">
+          <header className="flex items-center justify-between gap-4">
+            <div>
+              <p className="text-sm text-muted-foreground">AI Agent</p>
+              <h1 className="text-2xl font-semibold tracking-tight">Agents</h1>
+            </div>
             <Button
-              variant="ghost"
-              size="sm"
               render={(props) => (
                 <Link to="/agents" search={{ new: true }} {...props} />
               )}
@@ -90,119 +115,61 @@ function AgentsScreen() {
               <IconPlus />
               New agent
             </Button>
-          </div>
-          {loading ? (
-            // Reserves the same 180px the settled arms below occupy, so this section holds its
-            // own height and the page beneath it does not jump when the query settles.
-            <Skeleton className="mt-4 h-[180px]" />
-          ) : mine?.length ? (
-            // Wins over `failed`: TanStack Query keeps the last good `data` across a failed
-            // background refetch (see query-core's error action — it spreads `...state` and
-            // never clears `data`), so `isError` and a still-populated roster are an ordinary
-            // combination, not a contradiction. A stale roster beats an error card claiming
-            // there is nothing, which would be false here.
-            <div className="mt-4 grid grid-cols-[repeat(auto-fill,144px)] gap-4">
-              {mine.map((agent, index) => {
-                return (
-                  <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
-                  </StaggerItem>
-                );
-              })}
-            </div>
-          ) : failed && agents === undefined ? (
-            // `agents === undefined` narrows this to "the query has never once returned
-            // successfully" — not merely "the last request errored". `?.length` alone can't
-            // tell that apart from a slice that loaded and is genuinely empty: TanStack Query
-            // never clears `data` on a failed background refetch, so once the query has
-            // resolved even one response, `agents` stays defined and `mine`'s emptiness is a
-            // fact about that response, not a symptom of the failure. Rendering the destructive
-            // card there would say the opposite of what "Explore agents" beside it (or this
-            // section itself, on a different roster) proves by rendering real cards from the
-            // same query.
-            <Empty className="mt-4 h-[180px] border border-dashed border-destructive">
-              <EmptyHeader>
-                <EmptyTitle className="text-destructive">
-                  Your agents couldn't be loaded.
-                </EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            // Reached both when the query never failed and `mine` is genuinely empty, and when
-            // it failed but `agents` is defined — a loaded, empty slice either way. Same plain
-            // copy for both: an empty roster is a fact, not an error.
-            <Empty className="mt-4 h-[180px] border border-dashed">
-              <EmptyHeader>
-                <EmptyTitle className="text-muted-foreground">
-                  You don't have any agents created.
-                </EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          )}
-        </div>
-        <div className="mt-8 w-full max-w-2xl">
-          <h2 className="font-bold text-lg">Explore agents</h2>
-          {loading ? (
-            // Reserves the same 180px the settled arms below occupy, so this section holds its
-            // own height and the page beneath it does not jump when the query settles.
-            <Skeleton className="mt-4 h-[180px]" />
-          ) : explore?.length ? (
-            // Wins over `failed` for the same reason the "Your agents" section above does: a
-            // failed background refetch does not clear TanStack Query's cached `data`.
-            <div className="mt-4 grid grid-cols-[repeat(auto-fill,144px)] gap-4">
-              {explore.map((agent, index) => {
-                return (
-                  <StaggerItem index={index} key={agent.id}>
-                    <Link to="/agents" search={{ agent: agent.id }}>
-                      <AgentCard agent={agent} />
-                    </Link>
-                  </StaggerItem>
-                );
-              })}
-            </div>
-          ) : failed && agents === undefined ? (
-            // `agents === undefined` narrows this to "the query has never once returned
-            // successfully" — not merely "the last request errored". `?.length` alone can't
-            // tell that apart from a slice that loaded and is genuinely empty: TanStack Query
-            // never clears `data` on a failed background refetch, so once the query has
-            // resolved even one response, `agents` stays defined and `explore`'s emptiness is a
-            // fact about that response, not a symptom of the failure. Rendering the destructive
-            // card there would say the opposite of what "Your agents" beside it (or this
-            // section itself, on a different roster) proves by rendering real cards from the
-            // same query.
-            <Empty className="mt-4 h-[180px] border border-dashed border-destructive">
-              <EmptyHeader>
-                <EmptyTitle className="text-destructive">
-                  Agents shared with you couldn't be loaded.
-                </EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          ) : (
-            // Reached both when the query never failed and `explore` is genuinely empty, and
-            // when it failed but `agents` is defined — a loaded, empty slice either way. Same
-            // plain copy for both: an empty roster is a fact, not an error.
-            <Empty className="mt-4 h-[180px] border border-dashed">
-              <EmptyHeader>
-                <EmptyTitle className="text-muted-foreground">
-                  Nobody has shared an agent with you yet.
-                </EmptyTitle>
-              </EmptyHeader>
-            </Empty>
-          )}
-        </div>
-      </div>
+          </header>
+          <AgentGrid
+            agents={mine}
+            empty="You don't have any agents created."
+            failed={failed && agents === undefined}
+            loading={loading}
+            title="Your agents"
+          />
+          <AgentGrid
+            agents={explore}
+            empty="Nobody has shared an agent with you yet."
+            failed={failed && agents === undefined}
+            loading={loading}
+            title="Explore agents"
+          />
+        </main>
+      )}
       <CreateAgentDialog
         onClose={close}
         onCreated={(agentId) => navigate({ search: { agent: agentId } })}
-        open={showCreate}
-      />
-      <AgentDialog
-        agentId={selectedAgentId ?? null}
-        onClose={close}
-        open={showProfile}
+        open={isCreating === true}
       />
     </>
+  );
+}
+
+function AgentEditPage({ agentId }: { agentId: string }) {
+  const navigate = Route.useNavigate();
+  const agent = useQuery(agentQueryOptions(agentId));
+
+  return (
+    <main className="mx-auto flex h-full min-h-0 w-full max-w-[1200px] flex-col gap-5 overflow-hidden px-6 py-8">
+      <header className="sticky top-0 z-10 flex shrink-0 flex-wrap items-center justify-between gap-3 border-b border-border bg-background/95 pb-4 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-3">
+          <Button
+            aria-label="Back to agents"
+            onClick={() => navigate({ search: {} })}
+            size="icon-sm"
+            variant="ghost"
+          >
+            <IconArrowLeft />
+          </Button>
+          <div className="flex min-w-0 items-center gap-2 text-lg">
+            <IconSettings className="size-5 text-muted-foreground" />
+            <span className="text-muted-foreground">AI Agent</span>
+            <IconChevronRight className="size-4 text-muted-foreground" />
+            <span className="truncate font-semibold">
+              {agent.data?.name ?? "Edit"}
+            </span>
+          </div>
+        </div>
+      </header>
+      <div className="min-h-0 flex-1 overflow-hidden rounded-lg border border-border bg-background shadow-xs">
+        <AgentManagementPanel agentId={agentId} page />
+      </div>
+    </main>
   );
 }

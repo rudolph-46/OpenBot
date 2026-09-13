@@ -36,6 +36,8 @@ export const agentProfiles = pgTable(
     }),
     title: text("title").notNull(),
     roleDescription: text("role_description").notNull(),
+    description: text("description"),
+    instructions: text("instructions"),
     avatarSeed: text("avatar_seed").notNull(),
     visibility: agentVisibility("visibility").notNull(),
     /*

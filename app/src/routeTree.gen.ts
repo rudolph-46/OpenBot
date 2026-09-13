@@ -17,6 +17,7 @@ import { Route as AuthedOnboardingRouteImport } from './routes/_authed/onboardin
 import { Route as AuthedSettingsRouteRouteImport } from './routes/_authed/settings/route'
 import { Route as AuthedAppIndexRouteImport } from './routes/_authed/_app/index'
 import { Route as AuthedAppBotRouteImport } from './routes/_authed/_app/bot'
+import { Route as AuthedAppDashboardRouteImport } from './routes/_authed/_app/dashboard'
 import { Route as AuthedAppRoutinesRouteImport } from './routes/_authed/_app/routines'
 import { Route as AuthedAppSkillsRouteImport } from './routes/_authed/_app/skills'
 import { Route as AuthedAdminIndexRouteImport } from './routes/_authed/admin/index'
@@ -78,6 +79,11 @@ const AuthedAppIndexRoute = AuthedAppIndexRouteImport.update({
 const AuthedAppBotRoute = AuthedAppBotRouteImport.update({
   id: '/bot',
   path: '/bot',
+  getParentRoute: () => AuthedAppRoute,
+} as any)
+const AuthedAppDashboardRoute = AuthedAppDashboardRouteImport.update({
+  id: '/dashboard',
+  path: '/dashboard',
   getParentRoute: () => AuthedAppRoute,
 } as any)
 const AuthedAppRoutinesRoute = AuthedAppRoutinesRouteImport.update({
@@ -217,6 +223,7 @@ export interface FileRoutesByFullPath {
   '/settings': typeof AuthedSettingsRouteRouteWithChildren
   '/onboarding': typeof AuthedOnboardingRoute
   '/bot': typeof AuthedAppBotRoute
+  '/dashboard': typeof AuthedAppDashboardRoute
   '/routines': typeof AuthedAppRoutinesRoute
   '/skills': typeof AuthedAppSkillsRoute
   '/admin/audit': typeof AuthedAdminAuditRoute
@@ -247,6 +254,7 @@ export interface FileRoutesByTo {
   '/sign': typeof SignRoute
   '/onboarding': typeof AuthedOnboardingRoute
   '/bot': typeof AuthedAppBotRoute
+  '/dashboard': typeof AuthedAppDashboardRoute
   '/routines': typeof AuthedAppRoutinesRoute
   '/skills': typeof AuthedAppSkillsRoute
   '/admin/audit': typeof AuthedAdminAuditRoute
@@ -281,6 +289,7 @@ export interface FileRoutesById {
   '/_authed/_app': typeof AuthedAppRouteWithChildren
   '/_authed/onboarding': typeof AuthedOnboardingRoute
   '/_authed/_app/bot': typeof AuthedAppBotRoute
+  '/_authed/_app/dashboard': typeof AuthedAppDashboardRoute
   '/_authed/_app/routines': typeof AuthedAppRoutinesRoute
   '/_authed/_app/skills': typeof AuthedAppSkillsRoute
   '/_authed/admin/audit': typeof AuthedAdminAuditRoute
@@ -316,6 +325,7 @@ export interface FileRouteTypes {
     | '/settings'
     | '/onboarding'
     | '/bot'
+    | '/dashboard'
     | '/routines'
     | '/skills'
     | '/admin/audit'
@@ -346,6 +356,7 @@ export interface FileRouteTypes {
     | '/sign'
     | '/onboarding'
     | '/bot'
+    | '/dashboard'
     | '/routines'
     | '/skills'
     | '/admin/audit'
@@ -379,6 +390,7 @@ export interface FileRouteTypes {
     | '/_authed/_app'
     | '/_authed/onboarding'
     | '/_authed/_app/bot'
+    | '/_authed/_app/dashboard'
     | '/_authed/_app/routines'
     | '/_authed/_app/skills'
     | '/_authed/admin/audit'
@@ -467,6 +479,13 @@ declare module '@tanstack/react-router' {
       path: '/bot'
       fullPath: '/bot'
       preLoaderRoute: typeof AuthedAppBotRouteImport
+      parentRoute: typeof AuthedAppRoute
+    }
+    '/_authed/_app/dashboard': {
+      id: '/_authed/_app/dashboard'
+      path: '/dashboard'
+      fullPath: '/dashboard'
+      preLoaderRoute: typeof AuthedAppDashboardRouteImport
       parentRoute: typeof AuthedAppRoute
     }
     '/_authed/_app/routines': {
@@ -702,6 +721,7 @@ const AuthedSettingsRouteRouteWithChildren =
 
 interface AuthedAppRouteChildren {
   AuthedAppBotRoute: typeof AuthedAppBotRoute
+  AuthedAppDashboardRoute: typeof AuthedAppDashboardRoute
   AuthedAppRoutinesRoute: typeof AuthedAppRoutinesRoute
   AuthedAppSkillsRoute: typeof AuthedAppSkillsRoute
   AuthedAppIndexRoute: typeof AuthedAppIndexRoute
@@ -712,6 +732,7 @@ interface AuthedAppRouteChildren {
 
 const AuthedAppRouteChildren: AuthedAppRouteChildren = {
   AuthedAppBotRoute: AuthedAppBotRoute,
+  AuthedAppDashboardRoute: AuthedAppDashboardRoute,
   AuthedAppRoutinesRoute: AuthedAppRoutinesRoute,
   AuthedAppSkillsRoute: AuthedAppSkillsRoute,
   AuthedAppIndexRoute: AuthedAppIndexRoute,
